@@ -85,8 +85,8 @@ def run():
         sentiment= None             # 사전 완성 후, 연결
     )
 
-    print("=== 키워드 점수 Top 10 ===")
-    for item in scored[:10]:
+    print("=== 키워드 점수 ===")
+    for item in scored:
         b = item['breakdown']
         print(
             f"{item['keyword']:10} | "
