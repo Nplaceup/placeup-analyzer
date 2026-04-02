@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # app/ 기준
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # Nplaceup/ 기준
 
 # RDS & 로컬 db 모두 .env 하나로 관리
 env_path = BASE_DIR / ".env"
@@ -10,8 +10,9 @@ load_dotenv(dotenv_path=env_path)
 
 os.environ['JAVA_HOME'] = os.getenv('JAVA_HOME', '')
 
-STOPWORDS_PATH = BASE_DIR / "data" / "stopwords.txt"
-SENTIMENT_DICT_PATH = BASE_DIR / "data" / "SentiWord_info.json"
+APP_DIR = BASE_DIR / "app"
+STOPWORDS_PATH = APP_DIR / "data" / "stopwords.txt"
+SENTIMENT_DICT_PATH = APP_DIR / "data" / "SentiWord_info.json"
 
 # 읽기용 - RDS (크롤링 데이터)
 READ_DB_URL = (
