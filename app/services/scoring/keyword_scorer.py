@@ -38,11 +38,13 @@ class keywordScorer:
 
             if not date:
                 continue
+
             # 경과 기간 단위 통일 (month)
             months_ago = (now.year - date.year) * 12 + (now.month - date.month)
+            months_ago = max(months_ago, 0)     # 음수 방지
             # 경과 개월수 증가 할수록 가중치 감소 (가치 하락)
             weight = 1 / (1 + months_ago * 0.1)
-            weighted_sum += weight * counter[keyword]
+            weighted_sum += weight
             count += 1
 
         return round(weighted_sum / count, 4) if count > 0 else 0.0
