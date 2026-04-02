@@ -8,7 +8,6 @@ from pathlib import Path
 from konlpy.tag import Okt              
 from collections import Counter         
 
-
 class ReviewAnalyzer:
     def __init__(self):
         self.okt = Okt()
@@ -99,12 +98,15 @@ class ReviewAnalyzer:
              return {}
         
         doc_frequency = Counter()
+        # 각 리뷰의 모든 키워드를 가져오면서 빈도 체크 
+        # 즉, 이 매장에 등장한 모든 키워드 빈도 카운드
         for counter in per_review.values():
             for word in counter.keys():
                 doc_frequency[word] += 1
 
         tfidf_total = Counter()
 
+        # 리뷰 단위로 가져와서 결과적으로 전체 리뷰 분석
         for counter in per_review.values():
             total_words_in_doc = sum(counter.values())      # 해당 리뷰 키워드의 개수
             if total_words_in_doc == 0:
@@ -114,4 +116,12 @@ class ReviewAnalyzer:
                 idf = math.log(total_docs / doc_frequency[word])
                 tfidf_total[word] += round(tf * idf, 4)
         
+        # -- 정규화 추가 -- (0~1 사이의 값으로 조정)
+        # 리뷰 수가 많은 매장이 무조건 점수가 높아지는 편향을 제거
+        max_score = max(tfidf_total.values()) if tfidf_total else 1
+        tfidf_total = Counter({
+             word : round(score / max_score, 4)
+             for word, score in tfidf_total.items()
+        })
+
         return tfidf_total
