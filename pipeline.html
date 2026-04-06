@@ -66,6 +66,16 @@
     font-size: 10px; font-family: monospace;
     margin-bottom: 3px; line-height: 1.6;
   }
+  /* 구현 상태 뱃지 */
+  .s-status {
+    display: inline-block; font-size: 9px; font-weight: 700;
+    padding: 2px 7px; border-radius: 8px; margin-top: 6px;
+    letter-spacing: 0.3px;
+  }
+  .st-done { background: #0e1f15; color: #4ade80; border: 1px solid #22c55e44; }
+  .st-wip  { background: #1f1708; color: #fbbf24; border: 1px solid #f59e0b44; }
+  .st-todo { background: #161b27; color: #475569; border: 1px solid #2d374844; }
+  .st-team { background: #1c1100; color: #d97706; border: 1px dashed #78350f; }
 
   /* 우측 콘텐츠 */
   .stage-body {
@@ -371,6 +381,7 @@
       <div class="s-tag">Input</div>
       <div class="s-file">repository.py</div>
       <div class="s-file" style="color:#2563eb">RDS PostgreSQL</div>
+      <span class="s-status st-done">✓ 완료</span>
     </div>
     <div class="stage-body">
       <div class="proc-group">
@@ -409,6 +420,8 @@
       <div class="s-tag">NLP</div>
       <div class="s-file">nlp_engine.py</div>
       <div class="s-file">ReviewAnalyzer</div>
+      <span class="s-status st-done">✓ 완료</span>
+      <span class="s-status st-team">Step 2 Phase 2</span>
     </div>
     <div class="stage-body">
 
@@ -494,6 +507,7 @@
       <div class="s-tag">N-gram</div>
       <div class="s-file">ngram.py</div>
       <div class="s-file">NgramExtractor</div>
+      <span class="s-status st-done">✓ 완료</span>
     </div>
     <div class="stage-body">
       <div class="proc-group">
@@ -536,6 +550,8 @@
       <div class="s-tag">Scoring</div>
       <div class="s-file">keyword_scorer.py</div>
       <div class="s-file">keywordScorer</div>
+      <span class="s-status st-done">✓ 완료</span>
+      <span class="s-status st-todo">감성 Phase 2</span>
     </div>
     <div class="stage-body">
 
@@ -594,6 +610,7 @@
     <div class="stage-label" style="padding:16px 16px 16px 0;">
       <div class="s-tag" style="color:#d97706;">팀원</div>
       <div class="s-file" style="color:#92400e;">Step 5</div>
+      <span class="s-status st-team">Phase 2</span>
     </div>
     <div class="stage-body" style="padding:16px 0 16px 24px;">
       <div class="team-box">
@@ -642,6 +659,8 @@
       <div class="s-tag">Formatter</div>
       <div class="s-file">keyword_formatter.py</div>
       <div class="s-file">attach_inducement()</div>
+      <span class="s-status st-wip">🔄 진행 중</span>
+      <span class="s-status st-team">L2·L3 Phase 2</span>
     </div>
     <div class="stage-body">
 
@@ -764,6 +783,7 @@
       <div class="s-tag">Output</div>
       <div class="s-file">repository.py</div>
       <div class="s-file" style="color:#db2777">Local PostgreSQL</div>
+      <span class="s-status st-todo">📋 예정</span>
     </div>
     <div class="stage-body">
       <div class="proc-group">
