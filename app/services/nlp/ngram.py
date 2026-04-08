@@ -97,6 +97,9 @@ class NgramExtractor:
             pmi = math.log2(p_bigram / (p_w1 * p_w2))
             
             if pmi > pmi_threshold:
-                result[bigram] = count  # PMI 기준을 만족하는 bigram만 결과에 포함
+                # PMI 기준을 만족하는 bigram만 결과에 포함
+                # 기존 : 통과한 bigram의 빈도를 저장 (count)
+                # 개선 : PMI 점수로 저장 → 점수 기반으로 중요도 산출 가능 (추후 추가개선 필요)
+                result[bigram] = round(pmi, 4)
 
         return result
