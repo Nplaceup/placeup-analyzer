@@ -352,7 +352,7 @@
   <h1>Nplaceup · 데이터 파이프라인 상세</h1>
   <p>각 처리 단계의 입출력 · 내부 로직 · 팀원 연동 포인트</p>
 </div>
-<div class="updated">최종 갱신 2026-04-06 · 하이브리드 구조 반영 (사전 기반 Step 2 + 유사도 기반 Step 5 팀원 연동)</div>
+<div class="updated">최종 갱신 2026-04-08 · Formatter 구현 완료 · category_dict DB 보강 · compute_pmi PMI float 반환</div>
 
 <!-- 범례 -->
 <div class="legend">
@@ -395,6 +395,11 @@
           <div class="proc-fn">get_review_dates(place_id)</div>
           <div class="proc-arrow">→</div>
           <div class="proc-desc">리뷰 날짜 딕셔너리 · 최신성 스코어링에 사용<br>반환: <span style="color:#93c5fd;">{review_id: datetime}</span></div>
+        </div>
+        <div class="proc-row t-db">
+          <div class="proc-fn">get_review_analysis_labels()</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">review_analysis 테이블 조회 · category_dict.py build_category_dict() 호출 시 사용<br>반환: <span style="color:#93c5fd;">{"THEMES": [...], "MENUS": [...]}</span> · MENUS→음식 / THEMES→THEMES_CATEGORY_MAP</div>
         </div>
       </div>
     </div>
@@ -524,7 +529,8 @@
             <b style="color:#67e8f9;">PMI(w1,w2) = log[ P(w1,w2) / P(w1)·P(w2) ]</b><br>
             ① min_count 미만 → 저빈도 bigram 제거 (PMI 불안정 방지)<br>
             ② PMI 임계값 이하 → 우연한 인접 bigram 제거<br>
-            "음식 진짜"(우연) 제거 / "루프탑 뷰"(유의미) 통과
+            "음식 진짜"(우연) 제거 / "루프탑 뷰"(유의미) 통과<br>
+            <span style="color:#22d3ee;font-size:10px;">✓ 반환값: PMI float (기존 count int → 개선) · scorer 정규화 시 TF-IDF와 단위 통일</span>
           </div>
         </div>
       </div>
@@ -659,13 +665,22 @@
       <div class="s-tag">Formatter</div>
       <div class="s-file">keyword_formatter.py</div>
       <div class="s-file">attach_inducement()</div>
-      <span class="s-status st-wip">🔄 진행 중</span>
+      <span class="s-status st-done">✓ 완료</span>
       <span class="s-status st-team">L2·L3 Phase 2</span>
     </div>
     <div class="stage-body">
 
       <div class="proc-group">
         <div class="proc-group-title">1단계 · Tagging — 카테고리 분류</div>
+        <div class="proc-row t-fmt">
+          <div class="proc-fn">build_category_dict()</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            <span style="color:#6ee7b7;font-size:10px;">app/data/category_dict.py</span> · 모듈 로드 시 1회 실행<br>
+            CATEGORY_DICT_BASE(정적) + RDS review_analysis 데이터로 보강<br>
+            MENUS label → "음식" / THEMES label → THEMES_CATEGORY_MAP 적용 · DB 실패 시 BASE 폴백
+          </div>
+        </div>
         <div class="proc-row t-fmt">
           <div class="proc-fn">_tag_category(keyword)</div>
           <div class="proc-arrow">→</div>
@@ -712,12 +727,12 @@
             <div class="decision-row">
               <span class="d-cond cond-food">음식</span>
               <span class="d-purpose p-search">search</span>
-              <span class="d-result">"맛집", "추천" 결합</span>
+              <span class="d-result">맛집 · 추천 · 가성비 · 현지인맛집 · 웨이팅 · 후기좋은 · 데이트 · 혼밥 (8개)</span>
             </div>
             <div class="decision-row">
               <span class="d-cond cond-place">장소</span>
               <span class="d-purpose p-search">search</span>
-              <span class="d-result">"가볼만한곳", "추천" 결합</span>
+              <span class="d-result">가볼만한곳 · 추천 · 핫플 · 명소 · 데이트 · 놀거리 (6개)</span>
             </div>
             <div class="decision-row">
               <span class="d-cond cond-svc">서비스</span>

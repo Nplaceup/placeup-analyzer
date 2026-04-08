@@ -61,6 +61,25 @@ def get_all_place_ids() -> list[int]:
         return [row.places_id for row in result]
 
 
+def get_review_analysis_labels() -> dict[str, list[str]]:
+    """
+    review_analysis 테이블에서 type별 label 목록 조회
+    반환: {"THEMES": ["맛", "서비스", ...], "MENUS": ["스테이크", "파스타", ...]}
+    """
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT type, label
+                FROM review_analysis
+                ORDER BY type, id
+            """)
+        )
+        labels: dict[str, list[str]] = {}
+        for row in result:
+            labels.setdefault(row.type, []).append(row.label)
+        return labels
+
+
 def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     """
     키워드 월간 검색량 조회 (keyword_search_volumes 테이블)

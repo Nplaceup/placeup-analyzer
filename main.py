@@ -2,6 +2,7 @@ from collections import Counter
 from app.services.nlp.nlp_engine import ReviewAnalyzer
 from app.services.nlp.ngram import NgramExtractor
 from app.services.scoring.keyword_scorer import keywordScorer
+from app.output.keyword_formatter import attach_inducement
 from app.db.repository import get_reviews, get_review_dates
 
 def run(place_id: int):
@@ -50,7 +51,7 @@ def run(place_id: int):
         merged.update(valid_bg)
         merged_per_review[review_id] = merged
 
-    # -- 점수 산출 --
+    # ------------------------- 5. 점수 산출 ────────────────────────
     scorer      = keywordScorer()
     scored = scorer._calc_score(
         tfidf= dict(merged_tfidf),
@@ -69,6 +70,19 @@ def run(place_id: int):
             f"감성: {b['sentiment']:.4f} | "
             f"최신성: {b['recency']:.4f} | "
             f"일관성: {b['consistency']:.4f}"
+        )
+    # ------------- 6. Formatter로 카테고리 분류 → 유도어 결합 ──────────────────
+    formatted = attach_inducement(scored, top_n=20)
+
+    print("\n=== 포맷팅 결과 ===")
+    print(f"{'키워드':<20} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  ngram  induced")
+    print("-" * 70)
+    for item in formatted:
+        print(
+            f"{item['keyword']:<20} {item['base_score']:>6.4f}  "
+            f"{item['category']:<8}  {item['keyword_purpose']:<10}  "
+            f"{'O' if item['is_ngram'] else 'X':^5}  "
+            f"{'O' if item['is_induced'] else 'X':^7}"
         )
     
 if __name__ == '__main__':
