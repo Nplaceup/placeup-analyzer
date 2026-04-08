@@ -3,7 +3,10 @@ from app.services.nlp.nlp_engine import ReviewAnalyzer
 from app.services.nlp.ngram import NgramExtractor
 from app.services.scoring.keyword_scorer import keywordScorer
 from app.output.keyword_formatter import attach_inducement
-from app.db.repository import get_reviews, get_review_dates
+from app.db.repository import (
+    get_reviews, get_review_dates,
+    create_recommend_keywords_table, upsert_recommend_keywords,
+)
 
 def run(place_id: int):
 
@@ -84,7 +87,14 @@ def run(place_id: int):
             f"{'O' if item['is_ngram'] else 'X':^5}  "
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
-    
+
+    # ------------- 7. 로컬 DB upsert ──────────────────────────────────────────
+    # scored_map: keyword → breakdown (upsert 시 지표별 점수 저장용)
+    scored_map = {item["keyword"]: item["breakdown"] for item in scored}
+    upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
+    print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
+
 if __name__ == '__main__':
+    create_recommend_keywords_table()  # 최초 1회만 실행 (테이블 없을 때)
     run(place_id=166)
 

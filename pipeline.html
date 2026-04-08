@@ -352,7 +352,7 @@
   <h1>Nplaceup · 데이터 파이프라인 상세</h1>
   <p>각 처리 단계의 입출력 · 내부 로직 · 팀원 연동 포인트</p>
 </div>
-<div class="updated">최종 갱신 2026-04-08 · Formatter 구현 완료 · category_dict DB 보강 · compute_pmi PMI float 반환</div>
+<div class="updated">최종 갱신 2026-04-08 · upsert_recommend_keywords 구현 · recommend_keywords 테이블 스키마 확정 · database.py read_engine 버그 수정</div>
 
 <!-- 범례 -->
 <div class="legend">
@@ -798,25 +798,31 @@
       <div class="s-tag">Output</div>
       <div class="s-file">repository.py</div>
       <div class="s-file" style="color:#db2777">Local PostgreSQL</div>
-      <span class="s-status st-todo">📋 예정</span>
+      <span class="s-status st-done">✓ 완료</span>
     </div>
     <div class="stage-body">
       <div class="proc-group">
         <div class="proc-row t-write">
-          <div class="proc-fn">upsert_recommend<br>_keywords(place_id, rows)</div>
+          <div class="proc-fn">create_recommend<br>_keywords_table()</div>
           <div class="proc-arrow">→</div>
-          <div class="proc-desc">WriteSession → Local DB · 동일 place_id + keyword_name 존재 시 UPDATE, 없으면 INSERT</div>
+          <div class="proc-desc">WriteSession → Local DB · CREATE TABLE IF NOT EXISTS · 앱 구동 시 최초 1회 자동 실행</div>
+        </div>
+        <div class="proc-row t-write">
+          <div class="proc-fn">upsert_recommend<br>_keywords(place_id, formatted, scored_map)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">WriteSession → Local DB · ON CONFLICT (place_id, keyword) DO UPDATE · analyzed_at 갱신</div>
         </div>
       </div>
 
       <div class="io-box t-write">
         <div class="io-icon">🗄</div>
         <div>
-          <div class="io-label">place_recommended_keywords</div>
+          <div class="io-label">recommend_keywords</div>
           <div class="io-content">
-            id · place_id · keyword_name<br>
-            tfidf_score · sentiment_score · recency_score · consistency_score · keyword_score<br>
-            monthly_search (Phase 2) · is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · analyzed_at
+            id · place_id · keyword<br>
+            score · tfidf_score · sentiment_score · recency_score · consistency_score<br>
+            is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · category · analyzed_at<br>
+            <span style="color:#94a3b8;font-size:10px;">UNIQUE(place_id, keyword) · sentiment_score 기본 1.0 (Phase 2 연동 예정)</span>
           </div>
         </div>
       </div>
