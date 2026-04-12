@@ -310,6 +310,7 @@
   .p-search { background: #0d1b2e; color: #60a5fa; border: 1px solid #1e3a5f; }
   .p-market { background: #130d1f; color: #a78bfa; border: 1px solid #2d1b4e; }
   .cond-food  { background: #1a0800; color: #fb923c; }
+  .cond-taste { background: #0d1a10; color: #4ade80; }
   .cond-place { background: #061b20; color: #22d3ee; }
   .cond-svc   { background: #130d1f; color: #a78bfa; }
   .cond-mood  { background: #130d1f; color: #c084fc; }
@@ -352,7 +353,7 @@
   <h1>Nplaceup · 데이터 파이프라인 상세</h1>
   <p>각 처리 단계의 입출력 · 내부 로직 · 팀원 연동 포인트</p>
 </div>
-<div class="updated">최종 갱신 2026-04-08 · upsert_recommend_keywords 구현 · recommend_keywords 테이블 스키마 확정 · database.py read_engine 버그 수정</div>
+<div class="updated">최종 갱신 2026-04-09 · 맛 카테고리 추가 (marketing) · Layer 2 normalize 원칙 명확화 · 팀원 설계 문서 반영</div>
 
 <!-- 범례 -->
 <div class="legend">
@@ -454,9 +455,11 @@
         <div class="team-step">
           <div class="team-step-num">역할</div>
           <div class="team-step-desc">
-            형태소 분석 직후, <b>확실한 동의어</b>를 단일 표준형으로 통합<br>
+            형태소 분석 직후, <b>표현만</b> 단일 표준형으로 통합 — 의미 확장 X · 세부 키워드 보존<br>
+            예: "존맛" · "맛도리" · "맛있어요" → <b>"맛있다"</b> (표현 통일 ✓)<br>
             예: "카페라떼" · "카라" → <b>"라떼"</b> / "스파게티" → <b>"파스타"</b><br>
-            → TF-IDF 계산 전에 빈도 합산 → 실질 중요도 정확히 반영
+            <span style="color:#f87171;">주의: "육즙" → "맛" X / "식감" → "맛" X</span> — 세부 차별 표현은 그대로 보존해야 TF-IDF가 희소성을 정확히 계산<br>
+            → TF-IDF 계산 전 빈도 합산 → 실질 중요도 정확히 반영
           </div>
         </div>
         <div class="team-step">
@@ -728,6 +731,11 @@
               <span class="d-cond cond-food">음식</span>
               <span class="d-purpose p-search">search</span>
               <span class="d-result">맛집 · 추천 · 가성비 · 현지인맛집 · 웨이팅 · 후기좋은 · 데이트 · 혼밥 (8개)</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-taste">맛</span>
+              <span class="d-purpose p-market">marketing</span>
+              <span class="d-result">유도어 결합 없음 · 세부 맛 표현 원본 그대로 — 육즙 · 풍미 · 식감 · 바삭 · 담백 등</span>
             </div>
             <div class="decision-row">
               <span class="d-cond cond-place">장소</span>
