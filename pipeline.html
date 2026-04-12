@@ -310,6 +310,7 @@
   .p-search { background: #0d1b2e; color: #60a5fa; border: 1px solid #1e3a5f; }
   .p-market { background: #130d1f; color: #a78bfa; border: 1px solid #2d1b4e; }
   .cond-food  { background: #1a0800; color: #fb923c; }
+  .cond-taste { background: #0d1a10; color: #4ade80; }
   .cond-place { background: #061b20; color: #22d3ee; }
   .cond-svc   { background: #130d1f; color: #a78bfa; }
   .cond-mood  { background: #130d1f; color: #c084fc; }
@@ -352,7 +353,7 @@
   <h1>Nplaceup · 데이터 파이프라인 상세</h1>
   <p>각 처리 단계의 입출력 · 내부 로직 · 팀원 연동 포인트</p>
 </div>
-<div class="updated">최종 갱신 2026-04-06 · 하이브리드 구조 반영 (사전 기반 Step 2 + 유사도 기반 Step 5 팀원 연동)</div>
+<div class="updated">최종 갱신 2026-04-12 · nlp_preprocessing/review_tfidf_analyze 분리 · STAGE 1a 신규 (blocklist + KeywordNormalizer 통합) · Formatter → semantic_dictionary + CategoryMapper + inducement_dict 교체</div>
 
 <!-- 범례 -->
 <div class="legend">
@@ -396,6 +397,11 @@
           <div class="proc-arrow">→</div>
           <div class="proc-desc">리뷰 날짜 딕셔너리 · 최신성 스코어링에 사용<br>반환: <span style="color:#93c5fd;">{review_id: datetime}</span></div>
         </div>
+        <div class="proc-row t-db">
+          <div class="proc-fn">get_review_analysis_labels()</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">review_analysis 테이블 조회 · category_dict.py build_category_dict() 호출 시 사용<br>반환: <span style="color:#93c5fd;">{"THEMES": [...], "MENUS": [...]}</span> · MENUS→음식 / THEMES→THEMES_CATEGORY_MAP</div>
+        </div>
       </div>
     </div>
   </div>
@@ -412,77 +418,32 @@
   </div>
 
   <!-- ════════════════════════════
-       STAGE 1 · NLP 분석
-       + 팀원 Step 2 연동
+       STAGE 1 · 전처리 + 형태소 분석
   ════════════════════════════ -->
   <div class="stage t-nlp">
     <div class="stage-label">
       <div class="s-tag">NLP</div>
-      <div class="s-file">nlp_engine.py</div>
-      <div class="s-file">ReviewAnalyzer</div>
+      <div class="s-file">nlp_preprocessing.py</div>
+      <div class="s-file">ReviewPreprocessor</div>
+      <div class="s-file" style="margin-top:4px;">review_tfidf_analyze.py</div>
+      <div class="s-file">ReviewTfidfAnalyzer</div>
       <span class="s-status st-done">✓ 완료</span>
-      <span class="s-status st-team">Step 2 Phase 2</span>
     </div>
     <div class="stage-body">
-
       <div class="proc-group">
-        <div class="proc-group-title">텍스트 전처리 → 형태소 분석</div>
+        <div class="proc-group-title">기본 전처리 — nlp_preprocessing.py · ReviewPreprocessor</div>
         <div class="proc-row t-nlp">
           <div class="proc-fn">clean_text(text)</div>
           <div class="proc-arrow">→</div>
-          <div class="proc-desc">특수문자·이모지 제거, 반복 문자 정규화</div>
-        </div>
-        <div class="proc-row t-nlp">
-          <div class="proc-fn">pos_tagging(text)</div>
-          <div class="proc-arrow">→</div>
-          <div class="proc-desc">Okt 형태소 분석 · 명사(Noun) / 형용사(Adjective) 필터 · stopwords 제거</div>
+          <div class="proc-desc">HTML 복원 · ¶ 구분자 공백 치환 · 한글·공백 외 제거 · 연속 공백 축소<br><span style="color:#a78bfa;font-size:10px;">Okt 의존성 없음 — ML 없는 순수 정제</span></div>
         </div>
       </div>
-
-      <!-- 팀원 연동: Step 2 -->
-      <div class="team-box">
-        <div class="team-box-header">
-          <span class="team-tag">팀원 연동</span>
-          <span class="team-title">Step 2 · 사전 기반 동의어 정규화</span>
-          <span style="font-size:10px;color:#78350f;margin-left:auto;">TF-IDF 계산 전 삽입</span>
-        </div>
-        <div class="team-step">
-          <div class="team-step-num">역할</div>
-          <div class="team-step-desc">
-            형태소 분석 직후, <b>확실한 동의어</b>를 단일 표준형으로 통합<br>
-            예: "카페라떼" · "카라" → <b>"라떼"</b> / "스파게티" → <b>"파스타"</b><br>
-            → TF-IDF 계산 전에 빈도 합산 → 실질 중요도 정확히 반영
-          </div>
-        </div>
-        <div class="team-step">
-          <div class="team-step-num">연동 방식</div>
-          <div class="team-step-desc">
-            <b>팀원이 제공할 인터페이스:</b>
-            <span class="iface">normalize(tokens: list[str]) → list[str]</span><br>
-            pos_tagging() 결과 토큰 리스트를 받아 정규화된 토큰 리스트 반환<br>
-            우리 코드는 이 결과를 그대로 TF-IDF에 넣으면 됨
-          </div>
-        </div>
-        <div class="team-step">
-          <div class="team-step-num">주의</div>
-          <div class="team-step-desc">
-            "확실한 동의어"의 범위가 핵심 — 유사하지만 다른 단어("분위기" ≠ "인테리어")까지<br>
-            합산되면 의미 왜곡 발생 · <b>범위 기준은 팀원과 사전 협의 필요</b>
-          </div>
-        </div>
-      </div>
-
       <div class="proc-group">
-        <div class="proc-group-title">TF-IDF 계산 (동의어 정규화 후)</div>
+        <div class="proc-group-title">형태소 분석 — review_tfidf_analyze.py · ReviewTfidfAnalyzer</div>
         <div class="proc-row t-nlp">
-          <div class="proc-fn">_calculate_tfidf(per_review)</div>
+          <div class="proc-fn">extract_per_review(reviews)</div>
           <div class="proc-arrow">→</div>
-          <div class="proc-desc">정규화된 토큰으로 TF-IDF 행렬 계산 · 동의어 합산으로 점수 정확도 향상</div>
-        </div>
-        <div class="proc-row t-nlp">
-          <div class="proc-fn">analyze_reviews(reviews)</div>
-          <div class="proc-arrow">→</div>
-          <div class="proc-desc">반환: <span style="color:#c4b5fd;">{tfidf: Counter, per_review: {review_id: Counter}}</span></div>
+          <div class="proc-desc">clean_text() 후 Okt POS 태깅 · Noun / Adjective 추출 · stopwords 제거<br>반환: <span style="color:#c4b5fd;">{review_id: Counter(keyword → count)}</span></div>
         </div>
       </div>
     </div>
@@ -494,7 +455,66 @@
       <div class="connector-arrow">
         <div class="arr-line"></div>
         <div class="arr-head">▼</div>
-        <span class="arr-label">tfidf: Counter (정규화 적용) + per_review: {id: Counter}</span>
+        <span class="arr-label">per_review: {review_id: Counter}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════
+       STAGE 1a · 블랙리스트 + 표현 통일
+  ════════════════════════════ -->
+  <div class="stage t-nlp">
+    <div class="stage-label">
+      <div class="s-tag">NLP 1a</div>
+      <div class="s-file">blocklist.py</div>
+      <div class="s-file">keyword_normalizer.py</div>
+      <div class="s-file">KeywordNormalizer</div>
+      <span class="s-status st-done">✓ 완료 (팀원 통합)</span>
+    </div>
+    <div class="stage-body">
+      <div class="proc-group">
+        <div class="proc-group-title">Step 1 · KEYWORD_BLOCKLIST 필터 — blocklist.py</div>
+        <div class="proc-row t-nlp">
+          <div class="proc-fn">KEYWORD_BLOCKLIST</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">범용 상위 개념어 제거 · "서비스" · "분위기" · "직원" · "위치" 등<br>TF-IDF 풀에 포함 시 구체 키워드의 상대 점수 편향 방지</div>
+        </div>
+      </div>
+      <div class="proc-group">
+        <div class="proc-group-title">Step 2 · 표현 통일 — keyword_normalizer.py · KeywordNormalizer (팀원 모듈)</div>
+        <div class="proc-row t-nlp">
+          <div class="proc-fn">normalize(counter)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            expression_dictionary.py 역방향 dict 기반 · Counter → Counter<br>
+            "존맛탱"·"맛도리" → <b style="color:#c4b5fd;">맛있다</b> &nbsp;/&nbsp; "친절하다"·"상냥하다" → <b style="color:#c4b5fd;">친절</b> &nbsp;/&nbsp; "육즙많다" → <b style="color:#c4b5fd;">육즙</b><br>
+            사전 없는 키워드 → 원형 그대로 유지 (정보 손실 없음) · 동일 대표형 빈도 합산<br>
+            반환: <span style="color:#c4b5fd;">Counter(대표형 → 합산 count)</span>
+          </div>
+        </div>
+      </div>
+      <div class="proc-group">
+        <div class="proc-group-title">Step 3 · TF-IDF 계산 — review_tfidf_analyze.py · compute_tfidf()</div>
+        <div class="proc-row t-nlp">
+          <div class="proc-fn">compute_tfidf(per_review)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            TF(t,d) = count(t,d) / total_tokens(d) &nbsp;·&nbsp; IDF(t) = log(N / df(t)+1)<br>
+            TF-IDF(t) = Σ TF(t,d) × IDF(t) 전체 리뷰 합산<br>
+            반환: <span style="color:#c4b5fd;">{keyword: tfidf_score}</span> · keyword_scorer tfidf 인자로 바로 전달
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector t-nlp">
+    <div class="connector-left"></div>
+    <div class="connector-right">
+      <div class="connector-arrow">
+        <div class="arr-line"></div>
+        <div class="arr-head">▼</div>
+        <span class="arr-label">tfidf: {keyword: float} + per_review_clean: {id: Counter}</span>
       </div>
     </div>
   </div>
@@ -524,7 +544,8 @@
             <b style="color:#67e8f9;">PMI(w1,w2) = log[ P(w1,w2) / P(w1)·P(w2) ]</b><br>
             ① min_count 미만 → 저빈도 bigram 제거 (PMI 불안정 방지)<br>
             ② PMI 임계값 이하 → 우연한 인접 bigram 제거<br>
-            "음식 진짜"(우연) 제거 / "루프탑 뷰"(유의미) 통과
+            "음식 진짜"(우연) 제거 / "루프탑 뷰"(유의미) 통과<br>
+            <span style="color:#22d3ee;font-size:10px;">✓ 반환값: PMI float (기존 count int → 개선) · scorer 정규화 시 TF-IDF와 단위 통일</span>
           </div>
         </div>
       </div>
@@ -659,96 +680,79 @@
       <div class="s-tag">Formatter</div>
       <div class="s-file">keyword_formatter.py</div>
       <div class="s-file">attach_inducement()</div>
-      <span class="s-status st-wip">🔄 진행 중</span>
-      <span class="s-status st-team">L2·L3 Phase 2</span>
+      <span class="s-status st-done">✓ 완료</span>
+      <span class="s-status st-todo">similarity fallback Phase 2</span>
     </div>
     <div class="stage-body">
 
       <div class="proc-group">
-        <div class="proc-group-title">1단계 · Tagging — 카테고리 분류</div>
+        <div class="proc-group-title">Step 1 · 의미 태깅 — semantic_dictionary.py · get_semantic_tag()</div>
         <div class="proc-row t-fmt">
-          <div class="proc-fn">_tag_category(keyword)</div>
+          <div class="proc-fn">get_semantic_tag(keyword)</div>
           <div class="proc-arrow">→</div>
           <div class="proc-desc">
-            keyword.split() → 구성 단어 각각 CATEGORY_DICT 사전 매칭<br>
-            1-gram / 2-gram 통합 처리 · 매칭 실패 시 None → 다음 Layer로
+            SEMANTIC_DICTIONARY 직접 조회 → SemanticTag(category, property)<br>
+            "파스타" → (음식, 메뉴명/면류) &nbsp;/&nbsp; "육즙" → (맛, 식감/풍미) &nbsp;/&nbsp; "친절" → (서비스, 친절도)<br>
+            미등록 + use_similarity=True → <b style="color:#6ee7b7;">SemanticMapper</b> 유사도 fallback (팀원 모듈 · Phase 2 활성화)
           </div>
         </div>
       </div>
 
-      <!-- Layer 구조 -->
+      <!-- 매핑 Layer 구조 -->
       <div style="padding:12px 14px;background:#031510;border:1px solid #0a3020;border-radius:7px;">
-        <div style="font-size:10px;font-weight:700;color:#34d399;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">카테고리 분류 Layer 구조</div>
-
+        <div style="font-size:10px;font-weight:700;color:#34d399;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">의미 태깅 Layer 구조</div>
         <div style="display:flex;flex-direction:column;gap:6px;">
           <div style="display:flex;align-items:center;gap:8px;font-size:11px;">
             <span style="min-width:60px;color:#4ade80;font-weight:700;font-size:10px;">Layer 1</span>
-            <span style="background:#041a10;border:1px solid #0a4429;padding:3px 10px;border-radius:5px;color:#6ee7b7;font-family:monospace;font-size:10px;">CATEGORY_DICT 사전 매칭</span>
-            <span style="color:#475569;font-size:10px;">→ Phase 1 구현 ✓</span>
+            <span style="background:#041a10;border:1px solid #0a4429;padding:3px 10px;border-radius:5px;color:#6ee7b7;font-family:monospace;font-size:10px;">semantic_dictionary.py 직접 조회</span>
+            <span style="color:#475569;font-size:10px;">→ mapping_type: "dictionary" ✓</span>
           </div>
-          <div style="display:flex;align-items:flex-start;gap:8px;font-size:11px;opacity:0.55;">
+          <div style="display:flex;align-items:flex-start;gap:8px;font-size:11px;opacity:0.6;">
             <span style="min-width:60px;color:#d97706;font-weight:700;font-size:10px;">Layer 2</span>
-            <span style="background:#120a00;border:1px dashed #44200a;padding:3px 10px;border-radius:5px;color:#92400e;font-family:monospace;font-size:10px;">시드 공출현 분류</span>
-            <span style="color:#44300a;font-size:10px;">→ Phase 2</span>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:8px;font-size:11px;opacity:0.55;">
-            <span style="min-width:60px;color:#d97706;font-weight:700;font-size:10px;">Layer 3</span>
-            <span style="background:#120a00;border:1px dashed #44200a;padding:3px 10px;border-radius:5px;color:#92400e;font-family:monospace;font-size:10px;">팀원 유사도 매칭 (Step 5 연동)</span>
-            <span style="color:#44300a;font-size:10px;">→ Phase 2</span>
+            <span style="background:#120a00;border:1px dashed #44200a;padding:3px 10px;border-radius:5px;color:#92400e;font-family:monospace;font-size:10px;">SemanticMapper · KR-SBERT 유사도 (threshold 0.55)</span>
+            <span style="color:#44300a;font-size:10px;">→ mapping_type: "semantic" · Phase 2</span>
           </div>
           <div style="display:flex;align-items:center;gap:8px;font-size:11px;">
-            <span style="min-width:60px;color:#4ade80;font-weight:700;font-size:10px;">Layer 4</span>
-            <span style="background:#041a10;border:1px solid #0a4429;padding:3px 10px;border-radius:5px;color:#6ee7b7;font-family:monospace;font-size:10px;">Fallback → "marketing" / 유도어 없음</span>
-            <span style="color:#475569;font-size:10px;">→ Phase 1 구현 ✓</span>
+            <span style="min-width:60px;color:#4ade80;font-weight:700;font-size:10px;">Fallback</span>
+            <span style="background:#041a10;border:1px solid #0a4429;padding:3px 10px;border-radius:5px;color:#6ee7b7;font-family:monospace;font-size:10px;">category="미분류", property="" → mapping_type: "unmapped"</span>
           </div>
         </div>
       </div>
 
       <div class="proc-group">
-        <div class="proc-group-title">2단계 · Template — 유도어 세트 결정</div>
-        <div class="decision-box t-fmt">
-          <div class="decision-title"><span>⬡</span> 카테고리 → purpose → 유도어</div>
+        <div class="proc-group-title">Step 2 · purpose 결정 — category_mapper.py · CategoryMapper.assign_purpose()</div>
+        <div class="proc-row t-fmt">
+          <div class="proc-fn">PURPOSE_RULES[(cat, prop)]</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            (category, property) 튜플 → "search" | "marketing" · 같은 category 내에서도 property로 세분화<br>
+            CATEGORY_DEFAULT[category] 폴백 (property 미등록 시)
+          </div>
+        </div>
+        <div class="decision-box t-fmt" style="margin-top:6px;">
+          <div class="decision-title"><span>⬡</span> (category, property) → purpose → 유도어 여부</div>
           <div class="decision-rows">
-            <div class="decision-row">
-              <span class="d-cond cond-food">음식</span>
-              <span class="d-purpose p-search">search</span>
-              <span class="d-result">"맛집", "추천" 결합</span>
-            </div>
-            <div class="decision-row">
-              <span class="d-cond cond-place">장소</span>
-              <span class="d-purpose p-search">search</span>
-              <span class="d-result">"가볼만한곳", "추천" 결합</span>
-            </div>
-            <div class="decision-row">
-              <span class="d-cond cond-svc">서비스</span>
-              <span class="d-purpose p-market">marketing</span>
-              <span class="d-result">유도어 결합 없음 · 콘텐츠용</span>
-            </div>
-            <div class="decision-row">
-              <span class="d-cond cond-mood">분위기</span>
-              <span class="d-purpose p-market">marketing</span>
-              <span class="d-result">유도어 결합 없음 · 콘텐츠용</span>
-            </div>
-            <div class="decision-row">
-              <span class="d-cond cond-none">미분류</span>
-              <span class="d-purpose p-market">marketing</span>
-              <span class="d-result">Layer 4 Fallback · 유도어 없음</span>
-            </div>
+            <div class="decision-row"><span class="d-cond cond-food" style="font-size:9px;">음식 / 메뉴명/*</span><span class="d-purpose p-search">search</span><span class="d-result">맛집 · 추천 · 가성비 · 현지인맛집 · 웨이팅 · 후기좋은 · 데이트 · 혼밥</span></div>
+            <div class="decision-row"><span class="d-cond cond-taste" style="font-size:9px;">맛 / 식감/풍미</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY) · "바삭 맛집" 어색</span></div>
+            <div class="decision-row"><span class="d-cond cond-taste" style="font-size:9px;">맛 / 온도</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
+            <div class="decision-row"><span class="d-cond cond-svc" style="font-size:9px;">서비스 / 친절도</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY)</span></div>
+            <div class="decision-row"><span class="d-cond cond-svc" style="font-size:9px;">서비스 / 속도</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
+            <div class="decision-row"><span class="d-cond cond-place" style="font-size:9px;">장소 / 위치</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY)</span></div>
+            <div class="decision-row"><span class="d-cond cond-place" style="font-size:9px;">장소 / 편의/시설</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
+            <div class="decision-row"><span class="d-cond cond-none">미분류</span><span class="d-purpose p-market">marketing</span><span class="d-result">Fallback · 유도어 없음</span></div>
           </div>
         </div>
       </div>
 
       <div class="proc-group">
-        <div class="proc-group-title">3단계 · Matching + 4단계 · Fallback</div>
+        <div class="proc-group-title">Step 3 · 유도어 결합 — inducement_dict.py · get_inducements()</div>
         <div class="proc-row t-fmt">
-          <div class="proc-fn">search 키워드</div>
+          <div class="proc-fn">get_inducements(cat, prop)</div>
           <div class="proc-arrow">→</div>
-          <div class="proc-desc">원본(is_induced=False) + 유도어 결합(is_induced=True, is_ngram=True)</div>
-        </div>
-        <div class="proc-row t-fmt">
-          <div class="proc-fn">marketing / 미분류</div>
-          <div class="proc-arrow">→</div>
-          <div class="proc-desc">원본만 저장 · 유도어 결합 스킵</div>
+          <div class="proc-desc">
+            purpose=search 키워드만 유도어 결합 · NO_INDUCEMENT_PROPERTY 해당 시 빈 리스트 반환<br>
+            원본(is_induced=False) + 유도어 결합형(is_induced=True, is_ngram=True) 모두 저장
+          </div>
         </div>
       </div>
 
@@ -757,7 +761,7 @@
         <div>
           <div class="io-label">Output</div>
           <div class="io-content">
-            [{keyword, base_score, is_ngram, is_induced, <span style="color:#34d399;">keyword_purpose</span>}, ...]
+            [{keyword, base_score, is_ngram, is_induced, <span style="color:#34d399;">keyword_purpose, category, property, mapping_type</span>}, ...]
           </div>
         </div>
       </div>
@@ -770,7 +774,7 @@
       <div class="connector-arrow">
         <div class="arr-line"></div>
         <div class="arr-head">▼</div>
-        <span class="arr-label">[{keyword, score, is_ngram, is_induced, keyword_purpose}]</span>
+        <span class="arr-label">[{keyword, score, category, property, keyword_purpose, is_ngram, is_induced}]</span>
       </div>
     </div>
   </div>
@@ -783,25 +787,31 @@
       <div class="s-tag">Output</div>
       <div class="s-file">repository.py</div>
       <div class="s-file" style="color:#db2777">Local PostgreSQL</div>
-      <span class="s-status st-todo">📋 예정</span>
+      <span class="s-status st-done">✓ 완료</span>
     </div>
     <div class="stage-body">
       <div class="proc-group">
         <div class="proc-row t-write">
-          <div class="proc-fn">upsert_recommend<br>_keywords(place_id, rows)</div>
+          <div class="proc-fn">create_recommend<br>_keywords_table()</div>
           <div class="proc-arrow">→</div>
-          <div class="proc-desc">WriteSession → Local DB · 동일 place_id + keyword_name 존재 시 UPDATE, 없으면 INSERT</div>
+          <div class="proc-desc">WriteSession → Local DB · CREATE TABLE IF NOT EXISTS · 앱 구동 시 최초 1회 자동 실행</div>
+        </div>
+        <div class="proc-row t-write">
+          <div class="proc-fn">upsert_recommend<br>_keywords(place_id, formatted, scored_map)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">WriteSession → Local DB · ON CONFLICT (place_id, keyword) DO UPDATE · analyzed_at 갱신</div>
         </div>
       </div>
 
       <div class="io-box t-write">
         <div class="io-icon">🗄</div>
         <div>
-          <div class="io-label">place_recommended_keywords</div>
+          <div class="io-label">recommend_keywords</div>
           <div class="io-content">
-            id · place_id · keyword_name<br>
-            tfidf_score · sentiment_score · recency_score · consistency_score · keyword_score<br>
-            monthly_search (Phase 2) · is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · analyzed_at
+            id · place_id · keyword<br>
+            score · tfidf_score · sentiment_score · recency_score · consistency_score<br>
+            is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · category · analyzed_at<br>
+            <span style="color:#94a3b8;font-size:10px;">UNIQUE(place_id, keyword) · sentiment_score 기본 1.0 (Phase 2 연동 예정)</span>
           </div>
         </div>
       </div>

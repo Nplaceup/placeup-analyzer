@@ -1,5 +1,5 @@
 from sqlalchemy import text
-from app.db.database import ReadSession
+from app.db.database import ReadSession, WriteSession
 import pandas as pd
 from typing import Optional
 from datetime import datetime
@@ -61,6 +61,25 @@ def get_all_place_ids() -> list[int]:
         return [row.places_id for row in result]
 
 
+def get_review_analysis_labels() -> dict[str, list[str]]:
+    """
+    review_analysis 테이블에서 type별 label 목록 조회
+    반환: {"THEMES": ["맛", "서비스", ...], "MENUS": ["스테이크", "파스타", ...]}
+    """
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT type, label
+                FROM review_analysis
+                ORDER BY type, id
+            """)
+        )
+        labels: dict[str, list[str]] = {}
+        for row in result:
+            labels.setdefault(row.type, []).append(row.label)
+        return labels
+
+
 def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     """
     키워드 월간 검색량 조회 (keyword_search_volumes 테이블)
@@ -89,6 +108,150 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
 # WRITE (Local DB - 분석 결과 적재)
 # ───────────────────────────────────────────────
 
+def create_recommend_keywords_table() -> None:
+    """
+    recommend_keywords 테이블이 없으면 생성.
+    애플리케이션 초기 구동 시 한 번 호출.
+
+    컬럼 설명
+    ─────────────────────────────────────────────
+    place_id          : 매장 ID (FK: place_reviews.places_id)
+    keyword           : 키워드 (1-gram 또는 bigram)
+    score             : 최종 종합 점수
+    tfidf_score       : TF-IDF 지표 점수 (정규화 0~1)
+    sentiment_score   : 감성 지표 점수 (정규화 0~1, Phase 2 연동 전 기본 1.0)
+    recency_score     : 최신성 지표 점수 (0~1)
+    consistency_score : 일관성 지표 점수 (0~1)
+    is_ngram          : bigram 여부 (공백 포함 = True)
+    is_induced        : 유도어 결합 여부
+    keyword_purpose   : 'search' | 'marketing'
+    category          : '음식' | '장소' | '서비스' | '분위기' | '미분류'
+    analyzed_at       : 분석 실행 시각
+    ─────────────────────────────────────────────
+    UNIQUE(place_id, keyword) → upsert 기준 키
+    """
+    with WriteSession() as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS recommend_keywords (
+                id                SERIAL PRIMARY KEY,
+                place_id          INT           NOT NULL,
+                keyword           VARCHAR(100)  NOT NULL,
+                score             FLOAT         NOT NULL,
+                tfidf_score       FLOAT         NOT NULL DEFAULT 0.0,
+                sentiment_score   FLOAT         NOT NULL DEFAULT 1.0,
+                recency_score     FLOAT         NOT NULL DEFAULT 0.0,
+                consistency_score FLOAT         NOT NULL DEFAULT 0.0,
+                is_ngram          BOOLEAN       NOT NULL DEFAULT FALSE,
+                is_induced        BOOLEAN       NOT NULL DEFAULT FALSE,
+                keyword_purpose   VARCHAR(20)   NOT NULL DEFAULT 'marketing',
+                category          VARCHAR(20)   NOT NULL DEFAULT '미분류',
+                analyzed_at       TIMESTAMP     NOT NULL DEFAULT NOW(),
+                UNIQUE (place_id, keyword)
+            )
+        """))
+        session.commit()
+        print("[DB] recommend_keywords 테이블 확인/생성 완료")
+
+
+def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: dict) -> int:
+    """
+    formatter 결과를 로컬 DB에 upsert.
+
+    Parameters
+    ──────────
+    place_id    : 매장 ID
+    formatted   : attach_inducement() 반환값
+                  [{"keyword", "base_score", "is_ngram", "is_induced",
+                    "keyword_purpose", "category"}, ...]
+    scored_map  : keyword → breakdown dict 매핑 (score breakdown 저장용)
+                  {keyword: {"tfidf": float, "sentiment": float,
+                             "recency": float, "consistency": float}}
+
+    Returns
+    ───────
+    int : upsert된 행 수
+
+    동작
+    ───────
+    - (place_id, keyword) 중복 시 모든 수치 컬럼 덮어쓰기 (ON CONFLICT DO UPDATE)
+    - analyzed_at 갱신으로 마지막 분석 시각 추적 가능
+    """
+    if not formatted:
+        return 0
+
+    rows = []
+    for item in formatted:
+        kw = item["keyword"]
+        # 원본 키워드의 breakdown; 유도어 결합형은 기반 키워드 기준
+        base_kw   = kw.split()[0] if item["is_induced"] else kw
+        breakdown = scored_map.get(base_kw, {})
+
+        rows.append({
+            "place_id":          place_id,
+            "keyword":           kw,
+            "score":             item["base_score"],
+            "tfidf_score":       breakdown.get("tfidf",       0.0),
+            "sentiment_score":   breakdown.get("sentiment",   1.0),
+            "recency_score":     breakdown.get("recency",     0.0),
+            "consistency_score": breakdown.get("consistency", 0.0),
+            "is_ngram":          item["is_ngram"],
+            "is_induced":        item["is_induced"],
+            "keyword_purpose":   item["keyword_purpose"],
+            "category":          item["category"],
+        })
+
+    with WriteSession() as session:
+        session.execute(
+            text("""
+                INSERT INTO recommend_keywords
+                    (place_id, keyword, score,
+                     tfidf_score, sentiment_score, recency_score, consistency_score,
+                     is_ngram, is_induced, keyword_purpose, category, analyzed_at)
+                VALUES
+                    (:place_id, :keyword, :score,
+                     :tfidf_score, :sentiment_score, :recency_score, :consistency_score,
+                     :is_ngram, :is_induced, :keyword_purpose, :category, NOW())
+                ON CONFLICT (place_id, keyword)
+                DO UPDATE SET
+                    score             = EXCLUDED.score,
+                    tfidf_score       = EXCLUDED.tfidf_score,
+                    sentiment_score   = EXCLUDED.sentiment_score,
+                    recency_score     = EXCLUDED.recency_score,
+                    consistency_score = EXCLUDED.consistency_score,
+                    is_ngram          = EXCLUDED.is_ngram,
+                    is_induced        = EXCLUDED.is_induced,
+                    keyword_purpose   = EXCLUDED.keyword_purpose,
+                    category          = EXCLUDED.category,
+                    analyzed_at       = NOW()
+            """),
+            rows
+        )
+        session.commit()
+
+    print(f"[DB] place_id={place_id} → {len(rows)}개 키워드 upsert 완료")
+    return len(rows)
+
+
 # ───────────────────────────────────────────────
 # READ (Local DB - 저장 결과 조회)
 # ───────────────────────────────────────────────
+
+def get_recommend_keywords(place_id: int) -> list[dict]:
+    """
+    저장된 추천 키워드 조회 (score 내림차순)
+    반환: [{"keyword", "score", "keyword_purpose", "category",
+            "is_ngram", "is_induced", "analyzed_at"}, ...]
+    """
+    with WriteSession() as session:
+        result = session.execute(
+            text("""
+                SELECT keyword, score, tfidf_score, sentiment_score,
+                       recency_score, consistency_score,
+                       is_ngram, is_induced, keyword_purpose, category, analyzed_at
+                FROM recommend_keywords
+                WHERE place_id = :place_id
+                ORDER BY score DESC
+            """),
+            {"place_id": place_id}
+        )
+        return [dict(row._mapping) for row in result]
