@@ -17,6 +17,9 @@ class NgramExtractor:
         """
         리뷰 텍스트 1개 → 명사 Bigram Counter.
         clean_text() 후 Okt POS 태깅, 명사만 추출해 슬라이딩 윈도우로 2-gram 생성.
+        
+        - sprint 2까지는 슬라이딩 윈도우 방식 추출 후 PMI 필터링으로 유의미한 Bigram만 선별하는 방식으로 진행
+        - 추후 더 정교한 추출 방식 도입 고려 중 -> 기존 방식의 한계 (pmi 사용에도 불구하고 여전히 노이즈 과도함)
 
         반환: Counter({"루프탑 뷰": 2, "파스타 맛": 1, ...})
         """
@@ -64,7 +67,7 @@ class NgramExtractor:
         bigram_per_review: dict[int, Counter],
         unigram_counts:    Counter,
         min_count:         int   = 2,
-        df_min:            int   = 2,
+        df_min:            int   = 3,       # 허들 2로 했을 때, 필터링 수준 낮음 & 허들 3으로 했을 때, 필터링 너무 엄격 -> 적정값 찾을 필요성
         pmi_threshold:     float = 1.0,
     ) -> Counter:
         """
@@ -75,7 +78,7 @@ class NgramExtractor:
         허들 3단계
         ──────────────────────────────────────────────────────────
         1. min_count      최소 등장 횟수 (기본 2)
-        2. df_min         최소 등장 리뷰 수 (기본 2) — 단일 리뷰 반복 제거
+        2. df_min         최소 등장 리뷰 수 (기본 3) — 단일 리뷰 반복 제거
         3. pmi_threshold  PMI 최솟값 (기본 1.0 = 우연보다 2배 이상 유의미)
         ──────────────────────────────────────────────────────────
 

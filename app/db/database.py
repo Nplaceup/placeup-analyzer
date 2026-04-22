@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import READ_DB_URL, WRITE_DB_URL
 
 # 읽기용 엔진 — RDS (연결 끊김 시 자동 재연결)
-read_engine  = create_engine(READ_DB_URL,  pool_pre_ping=True)
+read_engine  = create_engine(WRITE_DB_URL,  pool_pre_ping=True)
 ReadSession  = sessionmaker(bind=read_engine)
 
 # 쓰기용 엔진 — RDS (연결 끊김 시 자동 재연결)

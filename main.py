@@ -297,4 +297,4 @@ def run(place_id: int):
 
 if __name__ == "__main__":
     create_recommend_keywords_table()  # 최초 1회만 실행 (테이블 없을 때)
-    run(place_id=166)
+    run(place_id=863) # 예시 place_id, 실제로는 여러 매장 반복 실행하거나 API 엔드포인트로 구현 예정
