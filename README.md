@@ -1,6 +1,6 @@
 # Nplaceup · NLP 키워드 추천 파이프라인
 
-네이버 플레이스 리뷰 텍스트를 분석해 매장별 검색 노출 개선에 유효한 키워드를 자동 추천하는 NLP 파이프라인입니다.
+네이버 플레이스 리뷰 텍스트를 분석해 매장별 검색 노출 개선에 유효한 키워드를 자동 추천하는 NLP 파이프라인
 
 ---
 
@@ -11,9 +11,9 @@
        │
        ▼
   STAGE 1   형태소 분석 + TF-IDF        Okt POS 태깅 → 명사·형용사 추출 → TF-IDF 가중치 계산
-  STAGE 1a  텍스트 정제                 범용어 제거(blocklist) · 동의어 통일(synonym_dict)
+  STAGE 1.5  텍스트 정제                 범용어 제거(blocklist) · 동의어 통일(synonym_dict)
   STAGE 2   N-gram 추출                 Bigram PMI 필터링 → TF-IDF 스케일 정규화 병합
-  STAGE 2.5 외부 키워드 결합            플레이스 순위 데이터 + NLP 결과 → CASE A / B / C 분류
+  STAGE 2.5 외부 키워드 결합            플레이스 순위 데이터 + NLP 결과 → CASE A / B / C 분류 (진행중)
   STAGE 3   복합 스코어링               TF-IDF · 감성 · 최신성 · 일관성 가중 합산
   STAGE 4   키워드 포맷                 카테고리 분류(KR-SBERT) → 유도어 결합
   STAGE 5   DB 저장                     recommend_keywords 테이블 upsert
@@ -146,6 +146,7 @@ app/
 ## 향후 계획
 
 - STAGE 3.5 의미 중복 키워드 병합 (`semantic_dedup`)
+- 로직 튜닝을 통해 결과값 개선
 - `get_keyword_trend()` · `get_competitor_ranks()` · `get_gap_keywords()` 구현
 - FastAPI 엔드포인트 연동
 - 감성 사전(`SentiWord_info.json`) 실연결
