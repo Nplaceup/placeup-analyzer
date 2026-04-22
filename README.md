@@ -73,7 +73,7 @@ score = TF-IDF(0.40) + sentiment(0.25) + recency(0.20) + consistency(0.15)
 | 지표 | 가중치 | 산출 방식 |
 |---|---|---|
 | TF-IDF | 40% | 정규화된 TF-IDF 점수 |
-| sentiment | 25% | 감성 점수 −1~1 → 0~1 정규화 (미연동 시 기본값 1.0) |
+| sentiment | 25% | 감성 점수 −1-1 → 0-1 정규화 (미연동 시 기본값 1.0) |
 | recency | 20% | 경과 개월 감쇠: `1 / (1 + months × 0.1)` |
 | consistency | 15% | 언급 리뷰 수 / 전체 리뷰 수 |
 
