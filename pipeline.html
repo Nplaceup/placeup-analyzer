@@ -353,7 +353,7 @@
   <h1>Nplaceup · 데이터 파이프라인 상세</h1>
   <p>각 처리 단계의 입출력 · 내부 로직 · 팀원 연동 포인트</p>
 </div>
-<div class="updated">최종 갱신 2026-04-12 · nlp_preprocessing/review_tfidf_analyze 분리 · STAGE 1a 신규 (blocklist + KeywordNormalizer 통합) · Formatter → semantic_dictionary + CategoryMapper + inducement_dict 교체</div>
+<div class="updated">최종 갱신 2026-04-13 · STAGE 2.5 keyword_merger.py 완료 (CASE A/B/C) · recommend_keywords 스키마 7컬럼 확장 · upsert + get_place_rankings/info 완료</div>
 
 <!-- 범례 -->
 <div class="legend">
@@ -558,7 +558,75 @@
       <div class="connector-arrow">
         <div class="arr-line"></div>
         <div class="arr-head">▼</div>
-        <span class="arr-label">1-gram Counter + PMI 필터링된 2-gram Counter 병합</span>
+        <span class="arr-label">merged_tfidf: {keyword: float} + merged_per_review: {id: Counter}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════
+       STAGE 2.5 · 외부 키워드 결합
+  ════════════════════════════ -->
+  <div class="stage" style="--line:#f97316;" class="t-scorer">
+    <div class="stage-label" style="--after-bg:#f97316;">
+      <div class="s-tag" style="color:#fb923c;">STAGE 2.5</div>
+      <div class="s-file" style="color:#f97316;">keyword_merger.py</div>
+      <div class="s-file" style="color:#f97316;">merge_keywords()</div>
+      <span class="s-status st-done">✓ 완료</span>
+    </div>
+    <div class="stage-body">
+      <div class="proc-group">
+        <div class="proc-group-title">RDS 데이터 조회</div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#fdba74;">get_place_rankings(place_id)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">keyword_place_ranks DISTINCT ON (keyword_id) · crawl_date DESC 최신 1건<br>반환: <span style="color:#fdba74;">[{keyword, rank_no, rank_no_change}]</span></div>
+        </div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#fdba74;">get_keyword_monthly_search(keywords)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">keyword_search_volumes JOIN keywords · DISTINCT ON (keyword_name) 최신<br>반환: <span style="color:#fdba74;">{keyword_name: monthly_search_volume}</span></div>
+        </div>
+      </div>
+      <div class="proc-group">
+        <div class="proc-group-title">CASE A / B / C 분류 → merged_tfidf 구성</div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#4ade80;">CASE A — NLP ∩ rankings</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">NLP 점수 유지 + 순위 메타데이터(rank_no, rank_no_change, search_vol) 결합</div>
+        </div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#fb923c;">CASE B — rankings only</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">합성 점수: (search_vol / max_b_vol) × max_nlp_score × 0.7 (NLP top 점수 70% 캡)<br>merged_per_review에 미추가 → scorer에서 recency=0, consistency=0</div>
+        </div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#94a3b8;">CASE C — NLP only</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">NLP 점수 그대로 유지 · 검색량·순위 메타 없음</div>
+        </div>
+      </div>
+      <div class="proc-group">
+        <div class="proc-group-title">keyword_meta 구성 → STAGE 4 formatted 항목에 주입</div>
+        <div class="proc-row" style="background:#1a0c00;border-color:#44200a;">
+          <div class="proc-fn" style="color:#fdba74;">keyword_meta[kw]</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            case_type · rank_no · rank_no_change · monthly_search_volume<br>
+            mention_count · competition_level ("높음"≥10,000 / "중간"≥1,000 / "낮음")<br>
+            is_opportunity = (search_vol ≥ 1,000 AND (rank_no IS NULL OR rank_no > 10))
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector" style="--line:#f97316;">
+    <div class="connector-left" style="border-color:#f97316;"></div>
+    <div class="connector-right">
+      <div class="connector-arrow">
+        <div class="arr-line" style="background:#f97316;"></div>
+        <div class="arr-head" style="color:#f97316;">▼</div>
+        <span class="arr-label" style="background:#1a0c00;color:#fdba74;border:1px solid #44200a;">merged_tfidf (CASE A+B+C) + keyword_meta {kw: {...}}</span>
       </div>
     </div>
   </div>
@@ -806,12 +874,13 @@
       <div class="io-box t-write">
         <div class="io-icon">🗄</div>
         <div>
-          <div class="io-label">recommend_keywords</div>
+          <div class="io-label">recommend_keywords (18컬럼)</div>
           <div class="io-content">
             id · place_id · keyword<br>
             score · tfidf_score · sentiment_score · recency_score · consistency_score<br>
-            is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · category · analyzed_at<br>
-            <span style="color:#94a3b8;font-size:10px;">UNIQUE(place_id, keyword) · sentiment_score 기본 1.0 (Phase 2 연동 예정)</span>
+            is_ngram · is_induced · <span style="color:#f472b6;">keyword_purpose</span> · category<br>
+            <span style="color:#f9a8d4;">case_type · rank_no · rank_no_change · monthly_search_volume · mention_count · competition_level · is_opportunity</span> · analyzed_at<br>
+            <span style="color:#94a3b8;font-size:10px;">UNIQUE(place_id, keyword) · CREATE TABLE + ALTER TABLE ADD COLUMN IF NOT EXISTS 멱등 실행</span>
           </div>
         </div>
       </div>

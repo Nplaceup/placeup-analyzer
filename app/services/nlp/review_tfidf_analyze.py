@@ -2,16 +2,15 @@
 #
 # ─ 역할 ──────────────────────────────────────────────────────────────────────
 # ReviewPreprocessor(clean_text) 이후 단계:
-#   1. extract_keywords()      : Okt POS 태깅 → Counter  (STAGE 1)
-#   2. extract_per_review()    : 리뷰 목록 → {review_id: Counter}
-#   3. compute_tfidf()         : per_review Counter → {keyword: tfidf_score} (STAGE 1b)
+#   1. extract_keywords()   : Okt POS 태깅 → Counter             (STAGE 1)
+#   2. extract_per_review() : 리뷰 목록 → {review_id: Counter}
+#   3. compute_tfidf()      : per_review Counter → {keyword: tfidf_score}  (STAGE 1b)
 #
 # ─ TF-IDF 계산 방식 ─────────────────────────────────────────────────────────
 # 문서 단위: 리뷰 1개 = 1 document
 # TF(t, d)  = count(t, d) / total_tokens(d)    (리뷰 내 정규화 빈도)
 # IDF(t)    = log(N / df(t) + 1)               (역문서빈도, 스무딩)
-# TF-IDF(t) = Σ TF(t,d) * IDF(t)              (전체 리뷰 합산)
-
+# TF-IDF(t) = Σ TF(t,d) × IDF(t)              (전체 리뷰 합산)
 
 import math
 from collections import Counter
@@ -31,7 +30,7 @@ class ReviewTfidfAnalyzer:
     def extract_keywords(self, text: str) -> Counter:
         """
         리뷰 텍스트 1개 → 명사·형용사 Counter.
-        clean_text() 후 Okt POS 태깅, 불용어·단어 1자 제거.
+        clean_text() 후 Okt POS 태깅, 불용어·1자 단어 제거.
 
         반환: Counter({"육즙": 3, "파스타": 2, ...})
         """
@@ -52,7 +51,7 @@ class ReviewTfidfAnalyzer:
     def extract_per_review(self, reviews: list) -> dict[int, Counter]:
         """
         리뷰 목록 → {review_id: Counter}.
-        ngram.py, keyword_scorer 등과 공유하는 기본 입력 형식.
+        ngram.py · keyword_scorer 등과 공유하는 기본 입력 형식.
 
         reviews 원소: dict({"id": int, "content": str, ...})
                      또는 ORM 객체(.id, .content 속성)
@@ -92,7 +91,7 @@ class ReviewTfidfAnalyzer:
         if n_docs == 0:
             return {}
 
-        # 문서 빈도 (df): 키워드가 등장한 리뷰 수
+        # 문서 빈도(df): 키워드가 등장한 리뷰 수
         df: dict[str, int] = Counter()
         for counter in per_review.values():
             for keyword in counter:
@@ -113,9 +112,7 @@ class ReviewTfidfAnalyzer:
                 continue
 
             for keyword, count in counter.items():
-                tf  = count / total_tokens
+                tf = count / total_tokens
                 tfidf_scores[keyword] = tfidf_scores.get(keyword, 0.0) + tf * idf[keyword]
-
-            
 
         return {kw: round(score, 6) for kw, score in tfidf_scores.items()}

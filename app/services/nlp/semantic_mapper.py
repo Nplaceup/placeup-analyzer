@@ -72,11 +72,11 @@ class SemanticMapper:
                 "similarity":   round(best_score, 4)
             }
 
-        # fallback 실패
+        # fallback 실패 (threshold 미달)
         return {
             "keyword":      keyword,
-            "category":     "기타",
-            "property":     "미분류",
+            "category":     "미분류",   # CategoryMapper.CATEGORY_DEFAULT 키와 통일
+            "property":     "",
             "mapping_type": "unmapped",
             "similarity":   round(best_score, 4)
         }

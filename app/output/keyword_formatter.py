@@ -6,6 +6,8 @@
 #     - 사전 직접 조회 → 유사도 fallback (SemanticMapper)
 #     - PURPOSE_RULES[(category, property)] → purpose (CategoryMapper)
 #     - 유도어 결합 대상·목록은 inducement_dict.py에서 관리
+# v3: 지역/업종 기반 키워드 결합 추가
+#     - attach_inducement(place_context=...) → 지역·업종 토큰 결합
 #
 # ─ 파이프라인 위치 ────────────────────────────────────────────────────────────
 # STAGE 3 (keyword_scorer) → [STAGE 4] → STAGE 5 (DB upsert)
@@ -18,8 +20,6 @@ from app.services.nlp.semantic_mapper import SemanticMapper
 _category_mapper = CategoryMapper()
 
 # SemanticMapper는 SentenceTransformer 로딩 비용이 있으므로 모듈 수준 싱글턴
-# 사전 직접 매핑만 필요하면 get_semantic_tag()로 충분;
-# 미등록 키워드 유사도 fallback이 필요하면 _semantic_mapper.tag() 사용
 _semantic_mapper: SemanticMapper | None = None
 
 
@@ -76,17 +76,19 @@ def attach_inducement(
     STAGE 3 scorer 결과에서 상위 top_n개를 받아
     의미 태깅 → purpose 결정 → 유도어 결합 → 최종 키워드 리스트 반환.
 
+    ※ 지역/업종 기반 키워드 결합은 STAGE 2.5 (keyword_merger.py) 담당.
+       RDS rankings 데이터 기반 CASE A/B/C 로직으로 처리.
+       결합 순서: "{지역/업종} {keyword}" (예: "강남 파스타", "이탈리안 맛집")
+
     Parameters
     ----------
     scored : list[dict]
         KeywordScorer._calc_score() 반환값
         [{"keyword": str, "score": float, "breakdown": dict, ...}, ...]
-        STAGE 2.5 이후라면 case_type, rank_no 등 추가 필드 포함 가능.
     top_n : int
         처리할 상위 키워드 수 (기본 20개)
     use_similarity : bool
         True면 미등록 키워드에 SentenceTransformer 유사도 fallback 적용.
-        모델 로딩 지연이 발생하므로 프로덕션에서는 필요 시에만 사용.
 
     Returns
     -------
@@ -99,7 +101,7 @@ def attach_inducement(
                 "is_induced":       bool,   # 유도어 결합 여부
                 "keyword_purpose":  str,    # "search" | "marketing"
                 "category":         str,    # 의미 카테고리
-                "property":         str,    # 세부 속성 (purpose 결정에 사용)
+                "property":         str,    # 세부 속성
                 "mapping_type":     str,    # "dictionary" | "semantic" | "unmapped"
             },
             ...
@@ -122,31 +124,27 @@ def attach_inducement(
             "property": prop,
         })["keyword_purpose"]
 
-        # 3단계: 원본 키워드 행 추가
-        result.append({
-            "keyword":         kw,
+        # 공통 베이스 필드
+        base = {
             "base_score":      score,
-            "is_ngram":        " " in kw,
             "is_induced":      False,
             "keyword_purpose": purpose,
             "category":        category,
             "property":        prop,
             "mapping_type":    tagged["mapping_type"],
-        })
+        }
+
+        # 3단계: 원본 키워드 행
+        result.append({**base, "keyword": kw, "is_ngram": " " in kw})
 
         # 4단계: 유도어 결합 (purpose=search인 경우만)
         if purpose == "search":
-            inducements = get_inducements(category, prop)
-            for word in inducements:
+            for word in get_inducements(category, prop):
                 result.append({
-                    "keyword":         f"{kw} {word}",
-                    "base_score":      score,
-                    "is_ngram":        True,
-                    "is_induced":      True,
-                    "keyword_purpose": "search",
-                    "category":        category,
-                    "property":        prop,
-                    "mapping_type":    tagged["mapping_type"],
+                    **base,
+                    "keyword":    f"{kw} {word}",
+                    "is_ngram":   True,
+                    "is_induced": True,
                 })
 
     return result
