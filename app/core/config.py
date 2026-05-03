@@ -33,7 +33,7 @@ WRITE_DB_URL = (
 
 # ── 사용자 유형 분류 경계값 ──────────────────────────────────────────────────
 # 리뷰 수 기반으로 cold_start / early_growth / active 분류
-# 임시값 — precision@K 검증 후 업종별 최적화 예정
+# 임시값 — 검증 후 업종별 최적화 예정
 USER_TYPE_THRESHOLDS = {
     "cold_start":   5,   # 리뷰 수 ≤ 5  → cold_start
     "early_growth": 50,  # 리뷰 수 ≤ 50 → early_growth
@@ -41,7 +41,7 @@ USER_TYPE_THRESHOLDS = {
 }
 
 # ── 모듈별 블렌딩 가중치 ─────────────────────────────────────────────────────
-# 임시값 — precision@K 검증 후 조정 예정
+# 임시값 — 검증 후 조정 예정
 # nlp 가중치가 0.00인 cold_start는 NLP 파이프라인 자체를 스킵
 MODULE_WEIGHTS: dict[str, dict[str, float]] = {
     "cold_start":   {"base": 0.30, "nlp": 0.00, "competitor": 0.70},
