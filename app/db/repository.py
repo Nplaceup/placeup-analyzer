@@ -204,7 +204,7 @@ def get_competitor_place_ids(
     -----
     - category: LIKE 매칭 — places.category 정규화 불일치 대응
     - address:  LIKE 매칭 — '{시도} {구군} {동}' 형식에서 구 단위 포함 여부 확인
-    - 리뷰수 정렬: 검증된 경쟁업체의 키워드가 분석 신뢰도를 높임
+    - 리뷰수 정렬: 리뷰 수로 내림차순 정렬해 실제로 잘 운영되는 업체를 우선 선택
     """
     with ReadSession() as session:
         result = session.execute(
