@@ -164,8 +164,8 @@ def run(place_id: int):
             bigrams_per_review,
             unigram_counts,
             min_count=2,
-            df_min=2,
-            pmi_threshold=1.0,
+            df_min=3,
+            pmi_threshold=2.0,
         )
 
         if filtered_bigrams:
