@@ -7,6 +7,10 @@ from app.db.repository import (
     get_reviews, get_review_dates,
     create_recommend_keywords_table, upsert_recommend_keywords,
 )
+from app.services.scoring.seo_scorer import SEOScorer
+from app.db.repository import get_recommend_keywords
+import redis
+import json
 
 def run(place_id: int):
 
@@ -93,6 +97,33 @@ def run(place_id: int):
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
     print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
+
+    # ------------- 6. SEO Score 산출 ──────────────────────────────────
+    keywords = get_recommend_keywords(place_id)
+    seo_scorer = SEOScorer()
+    seo_result = seo_scorer.calc_score(keywords)
+
+    print(f"\n{'='*60}")
+    print(f"  STAGE 6 · SEO Score 산출")
+    print('='*60)
+    print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
+    b = seo_result["breakdown"]
+    print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
+    print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
+    print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
+    print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+
+    # ------------- Redis 저장 ──────────────────────────────────────────
+    r = redis.Redis(host='localhost', port=6379, db=0)
+    
+    def json_serial(obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
+    
+    r.set(f"keywords:{place_id}", json.dumps(keywords, ensure_ascii=False, default=json_serial))
+    r.set(f"seo:{place_id}", json.dumps(seo_result, ensure_ascii=False))
+    print(f"\n[Redis] place_id={place_id} 데이터 저장 완료")
 
 if __name__ == '__main__':
     create_recommend_keywords_table()  # 최초 1회만 실행 (테이블 없을 때)
