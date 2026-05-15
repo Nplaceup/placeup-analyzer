@@ -2,7 +2,6 @@
 DB 데이터 진단 스크립트
 검색량·순위 점수가 0으로 나올 때 원인 파악용
 
-실행: python debug_db.py
 """
 from app.db.repository import (
     get_reviews,
