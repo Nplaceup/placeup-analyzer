@@ -12,6 +12,13 @@ from app.db.repository import get_recommend_keywords
 import redis
 import json
 
+r = redis.Redis(host='localhost', port=6379, db=0)
+
+def json_serial(obj):
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
+
 def run(place_id: int):
 
     reviews = get_reviews(place_id)
@@ -25,31 +32,25 @@ def run(place_id: int):
     n_gram = NgramExtractor(analyzer)
     bigrams_per_review = n_gram.extract_biagrams_per_review(reviews)
 
-    # PMI 계산용 unigram_counts: per_review를 전체 합산
     unigram_counts = Counter()
     for counter in result["per_review"].values():
         unigram_counts.update(counter)
 
-    # ------------------------- PMI 필터링 → 의미있는 bigram만 남김 -----------------
     filtered_bigrams = n_gram.compute_pmi(
         bigrams_per_review,
         unigram_counts,
-        min_count=3,       # 공동출현 3회 미만 제거
-        pmi_threshold=0.0  # 우연 수준 이하 제거
+        min_count=3,
+        pmi_threshold=0.0
     )
     
-    # ------------------------- 4. 1-gram + 2-gram 병합 ────────────────────────
-    # tfidf: 1-gram TF-IDF값에 PMI 통과한 bigram 빈도 합산
     merged_tfidf = dict(result["tfidf"])
     merged_tfidf.update(dict(filtered_bigrams))
 
-    # per_review: 각 리뷰에서 PMI 통과한 bigram만 추가
-    valid_bigrams = set(filtered_bigrams.keys())  # PMI 통과 bigram 집합
+    valid_bigrams = set(filtered_bigrams.keys())
 
     merged_per_review = {}
     for review_id, counter in result["per_review"].items():
-        merged = Counter(counter)  # 1-gram 복사
-        # 해당 리뷰의 bigram 중 PMI 통과한 것만 추가
+        merged = Counter(counter)
         valid_bg = {
             bg: cnt
             for bg, cnt in bigrams_per_review.get(review_id, {}).items()
@@ -64,7 +65,7 @@ def run(place_id: int):
         tfidf= dict(merged_tfidf),
         per_review= merged_per_review,
         review_dates= review_dates,         
-        sentiment= None             # 사전 완성 후, 연결
+        sentiment= None
     )
 
     print("=== 키워드 점수 ===")
@@ -78,6 +79,7 @@ def run(place_id: int):
             f"최신성: {b['recency']:.4f} | "
             f"일관성: {b['consistency']:.4f}"
         )
+
     # ------------- 6. Formatter로 카테고리 분류 → 유도어 결합 ──────────────────
     formatted = attach_inducement(scored, top_n=20)
 
@@ -93,12 +95,11 @@ def run(place_id: int):
         )
 
     # ------------- 7. 로컬 DB upsert ──────────────────────────────────────────
-    # scored_map: keyword → breakdown (upsert 시 지표별 점수 저장용)
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
     print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
-    # ------------- 6. SEO Score 산출 ──────────────────────────────────
+    # ------------- STAGE 6. SEO Score 산출 ──────────────────────────────────
     keywords = get_recommend_keywords(place_id)
     seo_scorer = SEOScorer()
     seo_result = seo_scorer.calc_score(keywords)
@@ -113,19 +114,50 @@ def run(place_id: int):
     print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
     print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
 
-    # ------------- Redis 저장 ──────────────────────────────────────────
-    r = redis.Redis(host='localhost', port=6379, db=0)
-    
-    def json_serial(obj):
-        if hasattr(obj, 'isoformat'):
-            return obj.isoformat()
-        raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
-    
-    r.set(f"keywords:{place_id}", json.dumps(keywords, ensure_ascii=False, default=json_serial))
+    # ------------- Redis 저장 (변경) ──────────────────────────────────────────
+    # 1. 추천 키워드: keyword 문자열만 추출
+    keyword_list = [item["keyword"] for item in formatted]
+    result_data = {
+        "place_id": place_id,
+        "keywords": keyword_list
+    }
+
+    # 2. 결과 저장 (TTL 1시간)
+    r.set(
+        f"result:{place_id}",
+        json.dumps(result_data, ensure_ascii=False),
+        ex=3600
+    )
+
+    # 3. SEO 점수 저장 (기존 유지)
     r.set(f"seo:{place_id}", json.dumps(seo_result, ensure_ascii=False))
-    print(f"\n[Redis] place_id={place_id} 데이터 저장 완료")
 
-if __name__ == '__main__':
-    create_recommend_keywords_table()  # 최초 1회만 실행 (테이블 없을 때)
-    run(place_id=166)
+    # 4. Backend에 완료 알림 발행
+    r.publish("analysis:done", json.dumps({
+        "place_id": place_id,
+        "status": "success"
+    }))
+    print(f"\n[Redis] place_id={place_id} 데이터 저장 및 알림 발행 완료")
 
+
+def listen_queue():
+    """Backend가 큐에 넣은 작업을 대기하며 처리"""
+    print("[Worker] 분석 큐 대기 중...")
+    while True:
+        _, data = r.brpop("analysis:queue")
+        payload = json.loads(data)
+        place_id = payload["place_id"]
+        print(f"[Worker] place_id={place_id} 분석 시작")
+        try:
+            run(place_id)
+        except Exception as e:
+            r.publish("analysis:done", json.dumps({
+                "place_id": place_id,
+                "status": "error",
+                "message": str(e)
+            }))
+
+
+if __name__ == "__main__":
+    create_recommend_keywords_table()
+    listen_queue()
