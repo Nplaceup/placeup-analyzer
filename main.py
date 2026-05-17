@@ -26,6 +26,17 @@ from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
 )
+from app.services.scoring.seo_scorer import SEOScorer
+from app.db.repository import get_recommend_keywords
+import redis
+import json
+
+r = redis.Redis(host='localhost', port=6379, db=0)
+
+def json_serial(obj):
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
 
 
 # ── 디버그 출력 헬퍼 ─────────────────────────────────────────────────────────
@@ -64,9 +75,9 @@ def run(place_id: int):
     else:
         print(f"  place_info     : 조회 실패 (지역/업종 결합 스킵)")
     print(f"  리뷰 샘플 (3개):")
-    for r in reviews[:3]:
-        body = r["content"][:60].replace("\n", " ")
-        print(f"    id={r['id']} | {body}...")
+    for review in reviews[:3]:
+        body = review["content"][:60].replace("\n", " ")
+        print(f"    id={review['id']} | {body}...")
 
     # ══════════════════════════════════════════════════════════════════════
     # 사용자 유형 분류 + 모듈1 (기본 키워드)
@@ -347,23 +358,69 @@ def run(place_id: int):
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
-    untagged = [it for it in formatted if not it["is_induced"] and it["category"] == "미분류"]
-    if untagged:
-        print(f"\n  ※ 미분류 키워드 {len(untagged)}개:")
-        for it in untagged:
-            print(f"    - {it['keyword']}")
+    # ------------- 7. 로컬 DB upsert ──────────────────────────────────────────
+    scored_map = {item["keyword"]: item["breakdown"] for item in scored}
+    upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
+    print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 5 · DB upsert
-    # ══════════════════════════════════════════════════════════════════════
-    # NLP 키워드만 breakdown 있음. 나머지는 빈 dict → upsert의 .get() 기본값 처리
-    nlp_scored_map = {item["keyword"]: item["breakdown"] for item in scored}
-    upserted = upsert_recommend_keywords(place_id, formatted, nlp_scored_map)
+    # ------------- STAGE 6. SEO Score 산출 ──────────────────────────────────
+    keywords = get_recommend_keywords(place_id)
+    seo_scorer = SEOScorer()
+    seo_result = seo_scorer.calc_score(keywords)
 
-    _sep(f"STAGE 5 · 완료")
-    print(f"  place_id={place_id}  →  {upserted}개 키워드 DB 저장")
+    print(f"\n{'='*60}")
+    print(f"  STAGE 6 · SEO Score 산출")
+    print('='*60)
+    print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
+    b = seo_result["breakdown"]
+    print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
+    print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
+    print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
+    print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
 
+    # ------------- Redis 저장 (변경) ──────────────────────────────────────────
+    # 1. 추천 키워드: keyword 문자열만 추출
+    keyword_list = [item["keyword"] for item in formatted]
+    result_data = {
+        "place_id": place_id,
+        "keywords": keyword_list
+    }
+
+    # 2. 결과 저장 (TTL 1시간)
+    r.set(
+        f"result:{place_id}",
+        json.dumps(result_data, ensure_ascii=False),
+        ex=3600
+    )
+
+    # 3. SEO 점수 저장 (기존 유지)
+    r.set(f"seo:{place_id}", json.dumps(seo_result, ensure_ascii=False))
+
+    # 4. Backend에 완료 알림 발행
+    r.publish("analysis:done", json.dumps({
+        "place_id": place_id,
+        "status": "success"
+    }))
+    print(f"\n[Redis] place_id={place_id} 데이터 저장 및 알림 발행 완료")
+
+
+def listen_queue():
+    """Backend가 큐에 넣은 작업을 대기하며 처리"""
+    print("[Worker] 분석 큐 대기 중...")
+    while True:
+        _, data = r.brpop("analysis:queue")
+        payload = json.loads(data)
+        place_id = payload["place_id"]
+        print(f"[Worker] place_id={place_id} 분석 시작")
+        try:
+            run(place_id)
+        except Exception as e:
+            r.publish("analysis:done", json.dumps({
+                "place_id": place_id,
+                "status": "error",
+                "message": str(e)
+            }))
 
 if __name__ == "__main__":
-    create_recommend_keywords_table()  # 최초 1회만 실행 (테이블 없을 때)
-    run(place_id=982) # 예시 place_id, 실제로는 여러 매장 반복 실행하거나 API 엔드포인트로 구현 예정
+    create_recommend_keywords_table()
+    listen_queue()
