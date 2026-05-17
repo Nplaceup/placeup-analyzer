@@ -2,3 +2,5 @@
 .env
 *.html
 .md
+__pycache__/
+*.pyc
