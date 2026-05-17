@@ -154,7 +154,7 @@ def get_place_info(place_id: int) -> dict | None:
     # parts[1] = 구/군 (강남구, 중구 ...) — "강남구" → "강남" 접미사 제거
     # parts[2] = 동/읍/면 (역삼동, 운서동 ...) — "역삼동" → "역삼" 접미사 제거
     city         = _strip_suffix(parts[1], ("구", "군", "시")) if len(parts) >= 2 else ""
-    neighborhood = _strip_suffix(parts[2], ("동", "읍", "면", "리")) if len(parts) >= 3 else ""
+    neighborhood = _strip_suffix(parts[2], ("구", "군", "동", "읍", "면", "리")) if len(parts) >= 3 else ""
 
     return {
         "name":         result.place_name     or "",
@@ -177,6 +177,108 @@ def _strip_suffix(word: str, suffixes: tuple[str, ...]) -> str:
         if word.endswith(suffix) and len(word) > len(suffix) + 1:
             return word[: -len(suffix)]
     return word
+
+
+def get_competitor_place_ids(
+    category:         str,
+    city:             str,
+    exclude_place_id: int,
+    limit:            int = 10,
+) -> list[int]:
+    """
+    동일 카테고리 + 도시 내 다른 매장 ID 조회 (경쟁업체 분석용).
+    리뷰 수 내림차순으로 정렬해 실제로 잘 운영되는 업체를 우선 선택한다.
+
+    Parameters
+    ----------
+    category         : 업종 문자열 (예: "파스타", "이탈리안")
+    city             : 구 단위 도시명 (예: "강남")  — get_place_info() 반환값
+    exclude_place_id : 결과에서 제외할 내 매장 ID
+    limit            : 리뷰수 상위 N개 (config.COMPETITOR_LIMIT 기본값 10)
+
+    Returns
+    -------
+    list[int]  경쟁업체 place_id 목록 (리뷰수 내림차순, 최대 limit개)
+
+    Notes
+    -----
+    - category: LIKE 매칭 — places.category 정규화 불일치 대응
+    - address:  LIKE 매칭 — '{시도} {구군} {동}' 형식에서 구 단위 포함 여부 확인
+    - 리뷰수 정렬: 리뷰 수로 내림차순 정렬해 실제로 잘 운영되는 업체를 우선 선택
+    """
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT   p.id
+                FROM     places p
+                JOIN (
+                    SELECT   places_id,
+                             COUNT(*) AS review_count
+                    FROM     place_reviews
+                    GROUP BY places_id
+                ) r ON r.places_id = p.id
+                WHERE  p.category LIKE :category
+                  AND  p.address  LIKE :city_pattern
+                  AND  p.id != :exclude_id
+                ORDER  BY r.review_count DESC
+                LIMIT  :limit
+            """),
+            {
+                "category":     f"%{category}%",
+                "city_pattern": f"%{city}%",
+                "exclude_id":   exclude_place_id,
+                "limit":        limit,
+            }
+        )
+        return [row.id for row in result]
+
+
+def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
+    """
+    여러 매장의 최신 키워드 + 순위 목록 조회 (경쟁업체 분석용).
+
+    매장별로 가장 최근 크롤링 기준 키워드를 가져온다.
+    rank_no를 포함해 반환하므로 순위역전 분석에 바로 사용 가능.
+
+    Parameters
+    ----------
+    place_ids : 조회할 매장 ID 목록
+
+    Returns
+    -------
+    dict[int, list[dict]]
+        {
+            place_id: [
+                {"keyword": str, "rank_no": int},
+                ...
+            ],
+            ...
+        }
+    빈 리스트 입력 시 빈 dict 반환.
+    """
+    if not place_ids:
+        return {}
+
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT DISTINCT ON (place_id, keyword_id)
+                       place_id,
+                       keyword_id,
+                       rank_no
+                FROM   keyword_place_ranks
+                WHERE  place_id = ANY(:place_ids)
+                ORDER  BY place_id, keyword_id, crawl_date DESC
+            """),
+            {"place_ids": place_ids}
+        )
+        mapping: dict[int, list[dict]] = {}
+        for row in result:
+            mapping.setdefault(row.place_id, []).append({
+                "keyword": row.keyword_id,
+                "rank_no": row.rank_no,
+            })
+        return mapping
 
 
 def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:

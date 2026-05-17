@@ -21,6 +21,7 @@
 from collections import Counter
 
 from app.db.repository import get_place_rankings, get_keyword_monthly_search
+from app.core.config import CASE_B_SCORE_CAP
 
 
 # 경쟁도 분류 기준 (월간 검색량 기준)
@@ -29,10 +30,6 @@ COMPETITION_THRESHOLDS = {
     "중간": 1_000,
     # 미만 → "낮음"
 }
-
-# CASE B 합성 점수 상한 (NLP top 점수 대비 비율)
-# 순위만 있는 키워드가 NLP 키워드를 밀어내지 않도록 캡 적용
-CASE_B_SCORE_CAP = 0.7
 
 
 def get_competition_level(monthly_search_volume: int) -> str:

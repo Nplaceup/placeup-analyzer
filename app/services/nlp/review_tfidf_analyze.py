@@ -42,7 +42,7 @@ class ReviewTfidfAnalyzer:
 
         keywords = [
             word for word, pos in pos_result
-            if pos in ("Noun", "Adjective")
+            if pos == "Noun"
             and word not in self.stopwords
             and len(word) > 1
         ]

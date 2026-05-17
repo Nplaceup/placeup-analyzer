@@ -67,8 +67,8 @@ class NgramExtractor:
         bigram_per_review: dict[int, Counter],
         unigram_counts:    Counter,
         min_count:         int   = 2,
-        df_min:            int   = 3,       # 허들 2로 했을 때, 필터링 수준 낮음 & 허들 3으로 했을 때, 필터링 너무 엄격 -> 적정값 찾을 필요성
-        pmi_threshold:     float = 1.0,
+        df_min:            int   = 3,
+        pmi_threshold:     float = 2.0,
     ) -> Counter:
         """
         PMI 계산 후 유의미한 Bigram만 반환.
@@ -79,7 +79,7 @@ class NgramExtractor:
         ──────────────────────────────────────────────────────────
         1. min_count      최소 등장 횟수 (기본 2)
         2. df_min         최소 등장 리뷰 수 (기본 3) — 단일 리뷰 반복 제거
-        3. pmi_threshold  PMI 최솟값 (기본 1.0 = 우연보다 2배 이상 유의미)
+        3. pmi_threshold  PMI 최솟값 (기본 2.0 = 우연보다 4배 이상 유의미)
         ──────────────────────────────────────────────────────────
 
         반환: Counter({bigram: pmi_score, ...})
@@ -121,8 +121,9 @@ class NgramExtractor:
 
             pmi = math.log2(p_bigram / (p_w1 * p_w2))
 
-            # ③ PMI 허들 (1.0 = 우연보다 2배 이상 유의미)
+            # ③ PMI 허들 (2.0 = 우연보다 4배 이상 유의미)
             if pmi > pmi_threshold:
+            
                 result[bigram] = round(pmi, 4)
 
         return result
