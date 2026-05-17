@@ -154,7 +154,7 @@ def get_place_info(place_id: int) -> dict | None:
     # parts[1] = 구/군 (강남구, 중구 ...) — "강남구" → "강남" 접미사 제거
     # parts[2] = 동/읍/면 (역삼동, 운서동 ...) — "역삼동" → "역삼" 접미사 제거
     city         = _strip_suffix(parts[1], ("구", "군", "시")) if len(parts) >= 2 else ""
-    neighborhood = _strip_suffix(parts[2], ("동", "읍", "면", "리")) if len(parts) >= 3 else ""
+    neighborhood = _strip_suffix(parts[2], ("구", "군", "동", "읍", "면", "리")) if len(parts) >= 3 else ""
 
     return {
         "name":         result.place_name     or "",
