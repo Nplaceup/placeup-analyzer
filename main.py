@@ -30,13 +30,17 @@ from app.services.scoring.seo_scorer import SEOScorer
 from app.db.repository import get_recommend_keywords
 import redis
 import json
+import time  
 
-r = redis.Redis(host='localhost', port=6379, db=0)
-
-def json_serial(obj):
-    if hasattr(obj, 'isoformat'):
-        return obj.isoformat()
-    raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
+# ── Redis 연결 (변경: 안정성 옵션 추가) ─────────────────────────────────────
+r = redis.Redis(
+    host='localhost',
+    port=6379,
+    db=0,
+    socket_keepalive=True,
+    socket_connect_timeout=5,
+    retry_on_timeout=True,
+)
 
 
 # ── 디버그 출력 헬퍼 ─────────────────────────────────────────────────────────
@@ -379,47 +383,52 @@ def run(place_id: int):
     print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
 
     # ------------- Redis 저장 (변경) ──────────────────────────────────────────
-    # 1. 추천 키워드: keyword 문자열만 추출
-    keyword_list = [item["keyword"] for item in formatted]
     result_data = {
         "place_id": place_id,
-        "keywords": keyword_list
+        "keywords": [
+            {
+                "keyword":             item["keyword"],
+                "score":               item["base_score"],
+                "monthlySearchVolume": item.get("monthly_search_volume", 0),
+                "rankNo":              item.get("rank_no"),
+                "competitionLevel":    item.get("competition_level", "낮음"),
+                "isOpportunity":       item.get("is_opportunity", False),
+            }
+            for item in formatted
+        ]
     }
-
-    # 2. 결과 저장 (TTL 1시간)
-    r.set(
-        f"result:{place_id}",
-        json.dumps(result_data, ensure_ascii=False),
-        ex=3600
+    r.lpush(
+        "analysis:result:queue",
+        json.dumps(result_data, ensure_ascii=False)
     )
-
-    # 3. SEO 점수 저장 (기존 유지)
-    r.set(f"seo:{place_id}", json.dumps(seo_result, ensure_ascii=False))
-
-    # 4. Backend에 완료 알림 발행
-    r.publish("analysis:done", json.dumps({
-        "place_id": place_id,
-        "status": "success"
-    }))
-    print(f"\n[Redis] place_id={place_id} 데이터 저장 및 알림 발행 완료")
+    print(f"\n[Redis] 결과 적재 완료 place_id={place_id}, 키워드={len(formatted)}개")
 
 
 def listen_queue():
     """Backend가 큐에 넣은 작업을 대기하며 처리"""
     print("[Worker] 분석 큐 대기 중...")
     while True:
-        _, data = r.brpop("analysis:queue")
-        payload = json.loads(data)
-        place_id = payload["place_id"]
-        print(f"[Worker] place_id={place_id} 분석 시작")
         try:
-            run(place_id)
+            _, data = r.brpop("analysis:queue")
+            payload  = json.loads(data)
+            place_id = payload["place_id"]
+            print(f"[Worker] place_id={place_id} 분석 시작")
+            try:
+                run(place_id)
+            except Exception as e:
+                print(f"[Worker] 분석 실패 place_id={place_id}, error={e}")
+                r.lpush(
+                    "analysis:result:queue",
+                    json.dumps({
+                        "place_id": place_id,
+                        "keywords": [],
+                        "error":    str(e)
+                    }, ensure_ascii=False)
+                )
         except Exception as e:
-            r.publish("analysis:done", json.dumps({
-                "place_id": place_id,
-                "status": "error",
-                "message": str(e)
-            }))
+            print(f"[Worker] 큐 오류: {e}")
+            time.sleep(3)
+
 
 if __name__ == "__main__":
     create_recommend_keywords_table()
