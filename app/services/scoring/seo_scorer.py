@@ -41,6 +41,7 @@ class SEOScorer:
         s4 = self._competition(keywords, total)
 
         final = round(s1 + s2 + s3 + s4)
+        has_opportunity = any(k.get("is_opportunity") for k in keywords)
 
         return {
             "total": final,
@@ -50,6 +51,7 @@ class SEOScorer:
                 "review_quality":       round(s2, 2),
                 "search_exposure":      round(s3, 2),
                 "competition":          round(s4, 2),
+                "has_opportunity":      has_opportunity,
             }
         }
 
