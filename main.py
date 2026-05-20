@@ -245,15 +245,21 @@ def run(place_id: int, round_no: int = 1):
 
         # ── STAGE 2.5 ─────────────────────────────────────────────────────
         # 외부 키워드 결합 (RDS rankings 기반 CASE A/B/C 분류)
+        # Round 1: RankSearch 전 → rankings 미사용, CASE C(NLP only)만 진행
+        # Round 2: Spring이 rankings/keyword_search_volumes DB 저장 후 → CASE A/B/C 분류
         # ─────────────────────────────────────────────────────────────────
-        merged_tfidf, merged_per_review, keyword_meta = merge_keywords(
-            place_id       = place_id,
-            nlp_tfidf      = merged_tfidf,
-            nlp_per_review = merged_per_review,
-        )
-
-        _sep("STAGE 2.5 · 외부 키워드 결합")
-        summarize_merge_result(keyword_meta, merged_tfidf)
+        if round_no == 2:
+            merged_tfidf, merged_per_review, keyword_meta = merge_keywords(
+                place_id       = place_id,
+                nlp_tfidf      = merged_tfidf,
+                nlp_per_review = merged_per_review,
+            )
+            _sep("STAGE 2.5 · 외부 키워드 결합")
+            summarize_merge_result(keyword_meta, merged_tfidf)
+        else:
+            # round 1: NLP only, keyword_meta 빈 dict
+            _sep("STAGE 2.5 · [SKIPPED] round=1 — RankSearch 전")
+            print("  Spring RankSearch 완료 후 round=2에서 CASE A/B/C 분류 예정")
 
         # ── STAGE 3 ───────────────────────────────────────────────────────
         # 스코어링
