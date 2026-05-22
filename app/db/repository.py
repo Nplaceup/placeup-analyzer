@@ -4,6 +4,7 @@ import pandas as pd
 from typing import Optional
 from datetime import datetime
 
+
 # ───────────────────────────────────────────────
 # READ (RDS - 크롤링 원본)
 # ───────────────────────────────────────────────
@@ -523,3 +524,80 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
             {"place_id": place_id}
         )
         return [dict(row._mapping) for row in result]
+
+def create_seo_results_table() -> None:
+    """
+    seo_results 테이블이 없으면 생성 (멱등 실행 가능)
+    """
+    with WriteSession() as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS seo_results (
+                id                     SERIAL PRIMARY KEY,
+                place_id               INT           NOT NULL,
+                score                  INT           NOT NULL,
+                grade                  VARCHAR(20)   NOT NULL,
+                keyword_optimization   FLOAT         NOT NULL DEFAULT 0.0,
+                review_quality         FLOAT         NOT NULL DEFAULT 0.0,
+                search_exposure        FLOAT         NOT NULL DEFAULT 0.0,
+                competition            FLOAT         NOT NULL DEFAULT 0.0,
+                summary                TEXT          NOT NULL,
+                seo_feedback           TEXT          NOT NULL DEFAULT '[]',
+                review_feedback        TEXT          NOT NULL DEFAULT '[]',
+                created_at             TIMESTAMP     NOT NULL DEFAULT NOW(),
+                UNIQUE (place_id)
+            )
+        """))
+        session.commit()
+        print("[DB] seo_results 테이블 확인/생성 완료")
+
+
+def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) -> None:
+    """
+    SEO Score + 피드백 결과를 seo_results 테이블에 upsert
+    """
+    import json
+    b = seo_result["breakdown"]
+
+    with WriteSession() as session:
+        session.execute(
+            text("""
+                INSERT INTO seo_results
+                    (place_id, score, grade,
+                     keyword_optimization, review_quality,
+                     search_exposure, competition,
+                     summary, seo_feedback, review_feedback,
+                     created_at)
+                VALUES
+                    (:place_id, :score, :grade,
+                     :keyword_optimization, :review_quality,
+                     :search_exposure, :competition,
+                     :summary, :seo_feedback, :review_feedback,
+                     NOW())
+                ON CONFLICT (place_id)
+                DO UPDATE SET
+                    score                  = EXCLUDED.score,
+                    grade                  = EXCLUDED.grade,
+                    keyword_optimization   = EXCLUDED.keyword_optimization,
+                    review_quality         = EXCLUDED.review_quality,
+                    search_exposure        = EXCLUDED.search_exposure,
+                    competition            = EXCLUDED.competition,
+                    summary                = EXCLUDED.summary,
+                    seo_feedback           = EXCLUDED.seo_feedback,
+                    review_feedback        = EXCLUDED.review_feedback,
+                    created_at             = NOW()
+            """),
+            {
+                "place_id":             place_id,
+                "score":                seo_result["total"],
+                "grade":                seo_result["grade"],
+                "keyword_optimization": b["keyword_optimization"],
+                "review_quality":       b["review_quality"],
+                "search_exposure":      b["search_exposure"],
+                "competition":          b["competition"],
+                "summary":              feedback_result["summary"],
+                "seo_feedback":         json.dumps(feedback_result["seo_feedback"],    ensure_ascii=False),
+                "review_feedback":      json.dumps(feedback_result["review_feedback"], ensure_ascii=False),
+            }
+        )
+        session.commit()
+    print(f"[DB] place_id={place_id} SEO 결과 upsert 완료")

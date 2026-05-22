@@ -5,7 +5,7 @@ class SEOFeedback:
     피드백 소스
     ─────────────────────────────────────
     ① SEO Score 기반   recommend_keywords 데이터
-    ② 리뷰 내용 기반   place_reviews 원본 텍스트 (body 컬럼)
+    ② 리뷰 내용 기반   place_reviews 원본 텍스트 (content) 컬럼)
     ─────────────────────────────────────
     출력: 총평 1개 + SEO 기반 최대 3개 + 리뷰 기반 최대 3개 = 총 최대 7개
     """
@@ -35,7 +35,7 @@ class SEOFeedback:
                 }
             }
         reviews : place_reviews 테이블 결과 (list[dict])
-            [{"id": int, "body": str, ...}, ...]
+            [{"id": int, "content": str, ...}, ...]
 
         Returns
         -------
@@ -123,7 +123,7 @@ class SEOFeedback:
         def keyword_ratio(keywords: list[str]) -> float:
             count = sum(
                 1 for r in reviews
-                if any(kw in r["body"] for kw in keywords)
+                if any(kw in r["content"] for kw in keywords)
             )
             return count / total
 
