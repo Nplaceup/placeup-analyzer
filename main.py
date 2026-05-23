@@ -25,8 +25,11 @@ from app.data.blocklist import KEYWORD_BLOCKLIST                           # STA
 from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
+    get_recommend_keywords,
+    create_seo_results_table, upsert_seo_result,
 )
 from app.services.scoring.seo_scorer import SEOScorer
+from app.services.scoring.seo_feedback import SEOFeedback
 from app.db.repository import get_recommend_keywords
 import redis
 import json
@@ -372,41 +375,55 @@ def run(place_id: int, round_no: int = 1):
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
-    # ------------- STAGE 5. 로컬 DB upsert ────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # STAGE 5 · recommend_keywords 테이블에 직접 저장 (Python 담당)
+    # ══════════════════════════════════════════════════════════════════════
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
-    print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
-    # ------------- STAGE 6. SEO Score 산출 ──────────────────────────────────
-    keywords = get_recommend_keywords(place_id)
-    seo_scorer = SEOScorer()
-    seo_result = seo_scorer.calc_score(keywords)
-
-    print(f"\n{'='*60}")
-    print(f"  STAGE 6 · SEO Score 산출")
-    print('='*60)
-    print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
-    b = seo_result["breakdown"]
-    print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
-    print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
-    print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
-    print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
-    
-    # ------------- STAGE 7. SEO 피드백 생성 ─────────────────────────────────
-    from app.services.scoring.seo_feedback import SEOFeedback
-    seo_feedback = SEOFeedback()
-    feedback_result = seo_feedback.generate(seo_result, reviews)
-
-    print(f"\n{'='*60}")
-    print(f"  STAGE 7 · SEO 피드백 생성")
-    print('='*60)
-    print(f"  총평 : {feedback_result['summary']}")
-    print(f"\n  [SEO 기반 피드백]")
-    for fb in feedback_result['seo_feedback']:
-        print(f"    · {fb}")
+    _sep("STAGE 5 · recommend_keywords 저장 완료")
+    print(f"  place_id={place_id} 키워드 {upserted}개 저장")
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 7 · Redis에 결과 적재 (round에 따라 다른 형식)
+    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만 의미 있음)
+    # ══════════════════════════════════════════════════════════════════════
+    seo_result      = None
+    feedback_result = None
+
+    if round_no == 2:
+        keywords        = get_recommend_keywords(place_id)
+        seo_scorer      = SEOScorer()
+        seo_result      = seo_scorer.calc_score(keywords)
+
+        _sep("STAGE 6 · SEO Score 산출")
+        print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
+        b = seo_result["breakdown"]
+        print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
+        print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
+        print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
+        print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+
+        # ── STAGE 7 · SEO 피드백 생성 ─────────────────────────────────────
+        seo_feedback_gen = SEOFeedback()
+        feedback_result  = seo_feedback_gen.generate(seo_result, reviews)
+
+        _sep("STAGE 7 · SEO 피드백 생성")
+        print(f"  총평 : {feedback_result['summary']}")
+        print(f"\n  [SEO 기반 피드백]")
+        for fb in feedback_result['seo_feedback']:
+            print(f"    · {fb}")
+        print(f"\n  [리뷰 기반 피드백]")
+        for fb in feedback_result['review_feedback']:
+            print(f"    · {fb}")
+
+        # ── STAGE 8 · seo_results 테이블에 직접 저장 (Python 담당) ────────
+        upsert_seo_result(place_id, seo_result, feedback_result)
+
+        _sep("STAGE 8 · seo_results 저장 완료")
+        print(f"  place_id={place_id} SEO 결과 저장")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # STAGE 9 · Redis 큐에 완료 알림 적재
     # ══════════════════════════════════════════════════════════════════════
     if round_no == 1:
         # 1차: 키워드 문자열 목록만 전달 (Spring이 RankSearch 후 2차 요청)
@@ -430,7 +447,22 @@ def run(place_id: int, round_no: int = 1):
                     "isOpportunity":       item.get("is_opportunity", False),
                 }
                 for item in formatted
-            ]
+            ],
+            "seo": {
+                "total":    seo_result["total"],
+                "grade":    seo_result["grade"],
+                "breakdown": {
+                    "keywordOptimization": seo_result["breakdown"]["keyword_optimization"],
+                    "reviewQuality":       seo_result["breakdown"]["review_quality"],
+                    "searchExposure":      seo_result["breakdown"]["search_exposure"],
+                    "competition":         seo_result["breakdown"]["competition"],
+                },
+            },
+            "feedback": {
+                "summary":        feedback_result["summary"],
+                "seoFeedback":    feedback_result["seo_feedback"],
+                "reviewFeedback": feedback_result["review_feedback"],
+            },
         }
 
     r.lpush(
@@ -438,29 +470,8 @@ def run(place_id: int, round_no: int = 1):
         json.dumps(result_data, ensure_ascii=False)
     )
 
-    # SEO 피드백 저장
-    r.set(
-        f"feedback:{place_id}",
-        json.dumps(feedback_result, ensure_ascii=False)
-    )
-
-    # SEO 점수 저장
-    r.set(
-        f"seo:{place_id}",
-        json.dumps(seo_result, ensure_ascii=False)
-    )
-
-    # Backend에 완료 알림 발행
-    r.publish("analysis:done", json.dumps({
-        "place_id": place_id,
-        "round": round_no,
-        "status": "success"
-    }, ensure_ascii=False))
-
-    print(
-        f"\n[Redis] 결과 적재 완료 "
-        f"place_id={place_id}, round={round_no}, 키워드={len(formatted)}개"
-    )
+    _sep("STAGE 9 · Redis 큐 적재 완료")
+    print(f"  place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
 
 
 def listen_queue():
@@ -493,4 +504,5 @@ def listen_queue():
 
 if __name__ == "__main__":
     create_recommend_keywords_table()
+    create_seo_results_table()
     listen_queue()
