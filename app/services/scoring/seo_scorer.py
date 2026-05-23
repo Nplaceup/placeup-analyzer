@@ -41,6 +41,7 @@ class SEOScorer:
         s4 = self._competition(keywords, total)
 
         final = round(s1 + s2 + s3 + s4)
+        has_opportunity = any(k.get("is_opportunity") for k in keywords)
 
         return {
             "total": final,
@@ -50,6 +51,7 @@ class SEOScorer:
                 "review_quality":       round(s2, 2),
                 "search_exposure":      round(s3, 2),
                 "competition":          round(s4, 2),
+                "has_opportunity":      has_opportunity,
             }
         }
 
@@ -84,15 +86,20 @@ class SEOScorer:
     def _search_exposure(self, keywords: list[dict], total: int) -> float:
         """
         상위 10위 이내 키워드 수 (10점) + 기회 키워드 수 (10점)
-        기준: 상위 3개 이상 만점 / 기회 키워드 2개 이상 만점 → 추후 조정 가능
+        - 순위 데이터가 있는 키워드끼리만 비교
+        - 순위 데이터 자체가 없으면 top_score 5점 (중간값) 부여
         """
-        top_count = sum(
-            1 for k in keywords
-            if k.get("rank_no") is not None and k["rank_no"] <= 10
-        )
-        opportunity_count = sum(1 for k in keywords if k.get("is_opportunity"))
+        ranked = [k for k in keywords if k.get("rank_no") is not None]
 
-        top_score         = min(top_count / 3, 1.0) * 10
+        if not ranked:
+            # 순위 데이터가 아예 없으면 중간값
+            top_score = 5.0
+        else:
+            top_count = sum(1 for k in ranked if k["rank_no"] <= 10)
+            # 순위 데이터 있는 것 중 30% 이상이 10위 이내면 만점
+            top_score = min(top_count / max(len(ranked) * 0.3, 1), 1.0) * 10
+
+        opportunity_count = sum(1 for k in keywords if k.get("is_opportunity"))
         opportunity_score = min(opportunity_count / 2, 1.0) * 10
 
         return top_score + opportunity_score

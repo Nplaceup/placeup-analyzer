@@ -346,8 +346,18 @@ def run(place_id: int, round_no: int = 1):
         item["rank_no_change"]        = meta.get("rank_no_change", 0)
         item["monthly_search_volume"] = item.get("monthly_search_volume") or meta.get("monthly_search_volume", 0)
         item["mention_count"]         = meta.get("mention_count", 0)
-        item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
+        monthly_search_volume = item.get("monthly_search_volume", 0)
+        if meta.get("competition_level"):
+            item["competition_level"] = meta["competition_level"]
+        else:
+            # 순위 데이터 없는 키워드는 검색량으로 직접 계산
+            if monthly_search_volume >= 10000:
+                item["competition_level"] = "높음"
+            elif monthly_search_volume >= 1000:
+                item["competition_level"] = "중간"
+            else:
+                item["competition_level"] = "중간"  # 검색량도 없으면 중간값
 
     _sep("STAGE 4 · 카테고리 태깅 + 유도어 결합")
     print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개 (원본 + 유도어 결합형)")
@@ -381,6 +391,19 @@ def run(place_id: int, round_no: int = 1):
     print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
     print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
     print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+    
+    # ------------- STAGE 7. SEO 피드백 생성 ─────────────────────────────────
+    from app.services.scoring.seo_feedback import SEOFeedback
+    seo_feedback = SEOFeedback()
+    feedback_result = seo_feedback.generate(seo_result, reviews)
+
+    print(f"\n{'='*60}")
+    print(f"  STAGE 7 · SEO 피드백 생성")
+    print('='*60)
+    print(f"  총평 : {feedback_result['summary']}")
+    print(f"\n  [SEO 기반 피드백]")
+    for fb in feedback_result['seo_feedback']:
+        print(f"    · {fb}")
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 7 · Redis에 결과 적재 (round에 따라 다른 형식)
@@ -414,7 +437,30 @@ def run(place_id: int, round_no: int = 1):
         "analysis:result:queue",
         json.dumps(result_data, ensure_ascii=False)
     )
-    print(f"\n[Redis] 결과 적재 완료 place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
+
+    # SEO 피드백 저장
+    r.set(
+        f"feedback:{place_id}",
+        json.dumps(feedback_result, ensure_ascii=False)
+    )
+
+    # SEO 점수 저장
+    r.set(
+        f"seo:{place_id}",
+        json.dumps(seo_result, ensure_ascii=False)
+    )
+
+    # Backend에 완료 알림 발행
+    r.publish("analysis:done", json.dumps({
+        "place_id": place_id,
+        "round": round_no,
+        "status": "success"
+    }, ensure_ascii=False))
+
+    print(
+        f"\n[Redis] 결과 적재 완료 "
+        f"place_id={place_id}, round={round_no}, 키워드={len(formatted)}개"
+    )
 
 
 def listen_queue():
