@@ -86,6 +86,7 @@ def get_review_analysis_labels() -> dict[str, list[str]]:
 def get_place_rankings(place_id: int) -> list[dict]:
     """
     매장의 현재 키워드 순위 데이터 조회 (STAGE 2.5 rankings-only / NLP∩rankings 판별용)
+    Spring rankings 테이블 기준으로 조회
 
     반환: [
         {
@@ -100,19 +101,20 @@ def get_place_rankings(place_id: int) -> list[dict]:
     with ReadSession() as session:
         result = session.execute(
             text("""
-                SELECT DISTINCT ON (keyword_id)
-                       keyword_id,
-                       rank_no,
-                       rank_no_change
-                FROM   keyword_place_ranks
-                WHERE  place_id = :place_id
-                ORDER  BY keyword_id, crawl_date DESC
+                SELECT DISTINCT ON (r.keyword_id)
+                       k.keyword_name  AS keyword,
+                       r.rank_no,
+                       r.rank_no_change
+                FROM   rankings r
+                JOIN   keywords k ON k.id = r.keyword_id
+                WHERE  r.place_id = :place_id
+                ORDER  BY r.keyword_id, r.crawl_date DESC
             """),
             {"place_id": place_id}
         )
         return [
             {
-                "keyword":        row.keyword_id,
+                "keyword":        row.keyword,
                 "rank_no":        row.rank_no,
                 "rank_no_change": row.rank_no_change or 0,
             }
@@ -263,20 +265,21 @@ def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
     with ReadSession() as session:
         result = session.execute(
             text("""
-                SELECT DISTINCT ON (place_id, keyword_id)
-                       place_id,
-                       keyword_id,
-                       rank_no
-                FROM   keyword_place_ranks
-                WHERE  place_id = ANY(:place_ids)
-                ORDER  BY place_id, keyword_id, crawl_date DESC
+                SELECT DISTINCT ON (r.place_id, r.keyword_id)
+                       r.place_id,
+                       k.keyword_name  AS keyword,
+                       r.rank_no
+                FROM   rankings r
+                JOIN   keywords k ON k.id = r.keyword_id
+                WHERE  r.place_id = ANY(:place_ids)
+                ORDER  BY r.place_id, r.keyword_id, r.crawl_date DESC
             """),
             {"place_ids": place_ids}
         )
         mapping: dict[int, list[dict]] = {}
         for row in result:
             mapping.setdefault(row.place_id, []).append({
-                "keyword": row.keyword_id,
+                "keyword": row.keyword,
                 "rank_no": row.rank_no,
             })
         return mapping
