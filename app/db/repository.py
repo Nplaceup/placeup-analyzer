@@ -604,3 +604,28 @@ def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) ->
         )
         session.commit()
     print(f"[DB] place_id={place_id} SEO 결과 upsert 완료")
+    
+
+def get_seo_result(place_id: int) -> dict | None:
+    """
+    저장된 SEO 결과 조회
+    """
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT place_id, score, grade,
+                       keyword_optimization, review_quality,
+                       search_exposure, competition,
+                       summary, seo_feedback, review_feedback,
+                       created_at
+                FROM seo_results
+                WHERE place_id = :place_id
+                LIMIT 1
+            """),
+            {"place_id": place_id}
+        ).fetchone()
+
+        if not result:
+            return None
+
+        return dict(result._mapping)
