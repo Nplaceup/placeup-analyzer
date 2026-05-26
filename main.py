@@ -25,8 +25,11 @@ from app.data.blocklist import KEYWORD_BLOCKLIST                           # STA
 from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
+    get_recommend_keywords,
+    create_seo_results_table, upsert_seo_result,
 )
 from app.services.scoring.seo_scorer import SEOScorer
+from app.services.scoring.seo_feedback import SEOFeedback
 from app.db.repository import get_recommend_keywords
 import redis
 import json
@@ -346,8 +349,18 @@ def run(place_id: int, round_no: int = 1):
         item["rank_no_change"]        = meta.get("rank_no_change", 0)
         item["monthly_search_volume"] = item.get("monthly_search_volume") or meta.get("monthly_search_volume", 0)
         item["mention_count"]         = meta.get("mention_count", 0)
-        item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
+        monthly_search_volume = item.get("monthly_search_volume", 0)
+        if meta.get("competition_level"):
+            item["competition_level"] = meta["competition_level"]
+        else:
+            # 순위 데이터 없는 키워드는 검색량으로 직접 계산
+            if monthly_search_volume >= 10000:
+                item["competition_level"] = "높음"
+            elif monthly_search_volume >= 1000:
+                item["competition_level"] = "중간"
+            else:
+                item["competition_level"] = "중간"  # 검색량도 없으면 중간값
 
     _sep("STAGE 4 · 카테고리 태깅 + 유도어 결합")
     print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개 (원본 + 유도어 결합형)")
@@ -362,28 +375,55 @@ def run(place_id: int, round_no: int = 1):
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
-    # ------------- STAGE 5. 로컬 DB upsert ────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # STAGE 5 · recommend_keywords 테이블에 직접 저장 (Python 담당)
+    # ══════════════════════════════════════════════════════════════════════
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
-    print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
-    # ------------- STAGE 6. SEO Score 산출 ──────────────────────────────────
-    keywords = get_recommend_keywords(place_id)
-    seo_scorer = SEOScorer()
-    seo_result = seo_scorer.calc_score(keywords)
-
-    print(f"\n{'='*60}")
-    print(f"  STAGE 6 · SEO Score 산출")
-    print('='*60)
-    print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
-    b = seo_result["breakdown"]
-    print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
-    print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
-    print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
-    print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+    _sep("STAGE 5 · recommend_keywords 저장 완료")
+    print(f"  place_id={place_id} 키워드 {upserted}개 저장")
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 7 · Redis에 결과 적재 (round에 따라 다른 형식)
+    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만 의미 있음)
+    # ══════════════════════════════════════════════════════════════════════
+    seo_result      = None
+    feedback_result = None
+
+    if round_no == 2:
+        keywords        = get_recommend_keywords(place_id)
+        seo_scorer      = SEOScorer()
+        seo_result      = seo_scorer.calc_score(keywords)
+
+        _sep("STAGE 6 · SEO Score 산출")
+        print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
+        b = seo_result["breakdown"]
+        print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
+        print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
+        print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
+        print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+
+        # ── STAGE 7 · SEO 피드백 생성 ─────────────────────────────────────
+        seo_feedback_gen = SEOFeedback()
+        feedback_result  = seo_feedback_gen.generate(seo_result, reviews)
+
+        _sep("STAGE 7 · SEO 피드백 생성")
+        print(f"  총평 : {feedback_result['summary']}")
+        print(f"\n  [SEO 기반 피드백]")
+        for fb in feedback_result['seo_feedback']:
+            print(f"    · {fb}")
+        print(f"\n  [리뷰 기반 피드백]")
+        for fb in feedback_result['review_feedback']:
+            print(f"    · {fb}")
+
+        # ── STAGE 8 · seo_results 테이블에 직접 저장 (Python 담당) ────────
+        upsert_seo_result(place_id, seo_result, feedback_result)
+
+        _sep("STAGE 8 · seo_results 저장 완료")
+        print(f"  place_id={place_id} SEO 결과 저장")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # STAGE 9 · Redis 큐에 완료 알림 적재
     # ══════════════════════════════════════════════════════════════════════
     if round_no == 1:
         # 1차: 키워드 문자열 목록만 전달 (Spring이 RankSearch 후 2차 요청)
@@ -407,14 +447,31 @@ def run(place_id: int, round_no: int = 1):
                     "isOpportunity":       item.get("is_opportunity", False),
                 }
                 for item in formatted
-            ]
+            ],
+            "seo": {
+                "total":    seo_result["total"],
+                "grade":    seo_result["grade"],
+                "breakdown": {
+                    "keywordOptimization": seo_result["breakdown"]["keyword_optimization"],
+                    "reviewQuality":       seo_result["breakdown"]["review_quality"],
+                    "searchExposure":      seo_result["breakdown"]["search_exposure"],
+                    "competition":         seo_result["breakdown"]["competition"],
+                },
+            },
+            "feedback": {
+                "summary":        feedback_result["summary"],
+                "seoFeedback":    feedback_result["seo_feedback"],
+                "reviewFeedback": feedback_result["review_feedback"],
+            },
         }
 
     r.lpush(
         "analysis:result:queue",
         json.dumps(result_data, ensure_ascii=False)
     )
-    print(f"\n[Redis] 결과 적재 완료 place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
+
+    _sep("STAGE 9 · Redis 큐 적재 완료")
+    print(f"  place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
 
 
 def listen_queue():
@@ -447,4 +504,5 @@ def listen_queue():
 
 if __name__ == "__main__":
     create_recommend_keywords_table()
+    create_seo_results_table()
     listen_queue()
