@@ -1,152 +1,186 @@
-# Nplaceup · NLP 키워드 추천 파이프라인
+# placeup-analyzer
 
-네이버 플레이스 리뷰 텍스트를 분석해 매장별 검색 노출 개선에 유효한 키워드를 자동 추천하는 NLP 파이프라인
-
----
-
-## 분석 파이프라인
-
-```
-리뷰 텍스트 (place_reviews)
-       │
-       ▼
-  STAGE 1   형태소 분석 + TF-IDF        Okt POS 태깅 → 명사·형용사 추출 → TF-IDF 가중치 계산
-  STAGE 1.5  텍스트 정제                 범용어 제거(blocklist) · 동의어 통일(synonym_dict)
-  STAGE 2   N-gram 추출                 Bigram PMI 필터링 → TF-IDF 스케일 정규화 병합
-  STAGE 2.5 외부 키워드 결합            플레이스 순위 데이터 + NLP 결과 → CASE A / B / C 분류 (진행중)
-  STAGE 3   복합 스코어링               TF-IDF · 감성 · 최신성 · 일관성 가중 합산
-  STAGE 4   키워드 포맷                 카테고리 분류(KR-SBERT) → 유도어 결합
-  STAGE 5   DB 저장                     recommend_keywords 테이블 upsert
-       │
-       ▼
-  추천 키워드 (recommend_keywords)
-```
+네이버 플레이스 리뷰 및 순위 데이터를 분석하여 SEO 키워드를 추천하고, SEO 점수와 피드백을 제공하는 데이터 파이프라인 서비스입니다.
 
 ---
 
-## 핵심 분석 방법론
+## 주요 기능
 
-### TF-IDF (STAGE 1)
+- **키워드 추천**: 리뷰 텍스트, 지역/업종, 경쟁업체 데이터를 분석하여 검색 최적화 키워드 추천
+- **SEO 점수 산출**: 플레이스 리뷰 품질, 매장 정보 완성도, 검색 노출 현황, 순위 관리 상태를 기반으로 사장님의 플레이스 관리 수준을 0~100점으로 점수화 (크롤링 데이터 확장 후 고도화 예정)
+- **SEO 피드백 제공**: 점수 기반 + 리뷰 내용 기반의 구체적인 개선 방향 제시
+- **경쟁업체 분석**: 동일 업종/지역 경쟁 매장과의 플레이스 관리 상태 비교 및 분석
 
-리뷰 1개를 document 단위로 취급해 키워드 중요도를 산출합니다.
+---
 
-```
-TF(t, d)  = count(t, d) / total_tokens(d)
-IDF(t)    = log( N / (df(t) + 1) )
-TF-IDF(t) = Σ TF(t, d) × IDF(t)
-```
+## 기술 스택
 
-### Bigram PMI 필터링 (STAGE 2)
-
-단어 시퀀스에서 슬라이딩 윈도우로 2-gram을 추출한 뒤 3단계 허들로 유의미한 복합어만 선별합니다.
-
-```
-PMI(w1, w2) = log2( P(w1,w2) / (P(w1) × P(w2)) )
-```
-
-| 허들 | 기준값 | 목적 |
-|---|---|---|
-| `min_count` | ≥ 2 | 희소 bigram 제거 |
-| `df_min` | ≥ 3 | 단일 리뷰 반복 노이즈 제거 |
-| `pmi_threshold` | > 1.0 | 우연 조합 대비 2배 이상 유의미한 복합어만 통과 |
-
-PMI 값은 `(pmi / max_pmi) × max_tfidf` 로 정규화해 unigram 점수 스케일에 맞게 병합합니다.
-
-### 외부 키워드 결합 — CASE A / B / C (STAGE 2.5)
-
-NLP 추출 결과와 네이버 플레이스 실제 순위 데이터를 교집합 기준으로 3가지 케이스로 분류합니다.
-
-| CASE | 조건 | 처리 방식 |
-|---|---|---|
-| A | NLP ∩ 순위 데이터 | NLP 점수 유지 + 순위 메타데이터 결합 |
-| B | 순위 데이터 only | 검색량 기반 합성 점수 부여 (상한 70% cap) |
-| C | NLP only | NLP 점수 그대로 유지 |
-
-`is_opportunity` 플래그: 월간 검색량 ≥ 1,000 이고 현재 순위 10위 밖인 키워드를 기회 키워드로 자동 식별합니다.
-
-### 복합 스코어링 (STAGE 3)
-
-```
-score = TF-IDF(0.40) + sentiment(0.25) + recency(0.20) + consistency(0.15)
-```
-
-| 지표 | 가중치 | 산출 방식 |
-|---|---|---|
-| TF-IDF | 40% | 정규화된 TF-IDF 점수 |
-| sentiment | 25% | 감성 점수 −1-1 → 0-1 정규화 (미연동 시 기본값 1.0) |
-| recency | 20% | 경과 개월 감쇠: `1 / (1 + months × 0.1)` |
-| consistency | 15% | 언급 리뷰 수 / 전체 리뷰 수 |
-
-### 카테고리 분류 및 유도어 결합 (STAGE 4)
-
-1. `semantic_dictionary` 직접 조회
-2. 미등록 키워드 → KR-SBERT 유사도 fallback (`SemanticMapper`, threshold=0.55)
-3. `CategoryMapper` 로 `keyword_purpose` 결정 (`search` | `marketing`)
-4. `search` 키워드에 `inducement_dict` 유도어 결합 (예: "파스타" → "파스타 맛집")
+| 분류 | 기술 |
+|------|------|
+| 언어 | Python 3.11+ |
+| NLP | KoNLPy (Okt), scikit-learn (TF-IDF) |
+| 유사도 | SentenceTransformers (snunlp/KR-SBERT-V40K-klueNLI-augSTS) |
+| DB | PostgreSQL (SQLAlchemy) |
+| 메시징 | Redis |
+| 환경 관리 | python-dotenv |
 
 ---
 
 ## 프로젝트 구조
 
 ```
-app/
-├── db/
-│   ├── database.py              # ReadSession / WriteSession 분리
-│   └── repository.py            # RDS 조회 · recommend_keywords upsert
-├── data/                        # 정적 사전 데이터
-│   ├── blocklist.py             # 범용어 목록
-│   ├── synonym_dict.txt         # 동의어 → 대표형
-│   ├── semantic_dictionary.py   # 키워드 → 카테고리 매핑
-│   ├── inducement_dict.py       # 유도어 사전
-│   └── SentiWord_info.json      # 감성 사전 (Phase 2 예정)
-├── services/
-│   ├── nlp/
-│   │   ├── nlp_preprocessing.py    # 텍스트 전처리
-│   │   ├── review_tfidf_analyze.py # 형태소 분석 · TF-IDF
-│   │   ├── keyword_normalizer.py   # 동의어 정규화
-│   │   ├── ngram.py                # Bigram PMI
-│   │   ├── keyword_merger.py       # 외부 키워드 결합 (CASE A/B/C)
-│   │   ├── semantic_mapper.py      # KR-SBERT 분류
-│   │   └── category_mapper.py      # purpose 결정
-│   └── scoring/
-│       └── keyword_scorer.py       # 복합 점수 산출
-└── output/
-    └── keyword_formatter.py        # 유도어 결합 · 최종 포맷
+placeup-analyzer/
+├── main.py                          # 파이프라인 진입점 + Redis 큐 워커
+├── app/
+│   ├── core/
+│   │   └── config.py                # 환경변수, 파라미터 설정
+│   ├── data/
+│   │   ├── blocklist.py             # 불용어 목록
+│   │   ├── expression_dictionary.py # 표현 통일 사전 (존맛 → 맛있다)
+│   │   ├── semantic_dictionary.py   # 의미 태그 사전 (육즙 → 맛/식감)
+│   │   ├── category_dict.py         # 카테고리 사전 (하위 호환용)
+│   │   ├── inducement_dict.py       # 유도어 사전 (맛집, 추천, 데이트 등)
+│   │   └── demo_data.py             # 데모용 샘플 데이터
+│   ├── db/
+│   │   ├── database.py              # DB 엔진 및 세션 설정
+│   │   └── repository.py            # DB 조회/저장 함수 모음
+│   ├── services/
+│   │   ├── analysis/
+│   │   │   ├── base_keyword_generator.py  # 모듈1: 지역+업종 기반 키워드 생성
+│   │   │   ├── competitor_analyzer.py     # 모듈3: 경쟁업체 키워드 분석
+│   │   │   ├── keyword_blender.py         # 모듈1/2/3 가중치 합산 블렌딩
+│   │   │   └── user_type_classifier.py    # 리뷰 수 기반 사용자 유형 분류
+│   │   ├── nlp/
+│   │   │   ├── nlp_preprocessing.py       # 텍스트 전처리 (특수문자, 이모지 제거)
+│   │   │   ├── review_tfidf_analyze.py    # 형태소 분석 + TF-IDF 계산
+│   │   │   ├── keyword_normalizer.py      # 표현 통일 (expression_dictionary 기반)
+│   │   │   ├── keyword_merger.py          # STAGE 2.5: NLP + 순위 데이터 결합
+│   │   │   ├── ngram.py                   # N-gram PMI 필터링
+│   │   │   ├── semantic_mapper.py         # 유사도 기반 의미 태그 매핑
+│   │   │   ├── category_mapper.py         # keyword_purpose 결정 (search/marketing)
+│   │   │   └── sentiment.py               # 감성 분석 (Phase 2 연동 예정)
+│   │   └── scoring/
+│   │       ├── keyword_scorer.py          # 키워드 복합 점수 계산 (TF-IDF/감성/최신성/일관성)
+│   │       ├── seo_scorer.py              # SEO 점수 산출 (0~100점)
+│   │       ├── seo_feedback.py            # SEO 피드백 생성
+│   │       └── test_seo_scorer.py         # SEO 점수 Mock 테스트
+│   └── output/
+│       └── keyword_formatter.py           # STAGE 4: 의미 태깅 + 유도어 결합
 ```
 
 ---
 
-## 출력 스키마 — `recommend_keywords`
+## 파이프라인 흐름
 
-| 컬럼 | 설명 |
-|---|---|
-| `keyword` | 최종 키워드 (유도어 결합형 포함) |
-| `score` | 최종 복합 점수 |
-| `tfidf_score` / `recency_score` / `consistency_score` | 지표별 점수 |
-| `case_type` | A / B / C |
-| `rank_no` / `rank_no_change` | 현재 순위 · 변동 |
-| `monthly_search_volume` | 월간 검색량 |
-| `competition_level` | 높음 / 중간 / 낮음 |
-| `is_opportunity` | 기회 키워드 여부 |
-| `category` / `keyword_purpose` | 의미 분류 결과 |
+```
+STAGE 0   DB 조회 (리뷰, 매장 정보)
+            ↓
+          사용자 유형 분류 (cold_start / early_growth / active)
+            ↓
+모듈1     지역+업종 기반 기본 키워드 생성
+            ↓
+모듈2     NLP 파이프라인 (cold_start 스킵)
+          STAGE 1  형태소 분석 (Okt POS)
+          STAGE 1a 불용어 제거 + 표현 통일
+          STAGE 1b TF-IDF 계산
+          STAGE 2  N-gram PMI (현재 비활성화)
+          STAGE 2.5 외부 순위 데이터 결합 (CASE A/B/C)
+          STAGE 3  키워드 복합 점수 산출
+            ↓
+모듈3     경쟁업체 키워드 분석
+            ↓
+          블렌딩 (모듈1/2/3 가중치 합산)
+            ↓
+STAGE 4   의미 태깅 + 유도어 결합
+            ↓
+STAGE 5   DB upsert (recommend_keywords)
+            ↓
+STAGE 6   SEO 점수 산출
+            ↓
+STAGE 7   SEO 피드백 생성
+            ↓
+STAGE 9   Redis 큐 적재 → 백엔드 전달
+```
 
 ---
 
-## 기술 스택
+## 연동 구조
 
-| 분류 | 사용 기술 |
-|---|---|
-| 형태소 분석 | KoNLPy (Okt) |
-| 의미 유사도 | Sentence-Transformers (KR-SBERT) |
-| DB | PostgreSQL · SQLAlchemy |
-| 언어 | Python 3.11 |
+```
+Spring Backend
+      ↓ analysis:queue에 {place_id, round} 적재
+    Redis
+      ↓ brpop으로 작업 수신
+placeup-analyzer (워커)
+      ↓ 파이프라인 실행
+      ↓ round 1: 키워드 문자열 목록 → analysis:result:queue 적재
+      ↓ round 2: 키워드 + 순위/검색량 전체 데이터 → analysis:result:queue 적재
+    Redis
+      ↑ 결과 수신
+Spring Backend → 프론트 전달
+```
+
+### Round 구분
+
+| Round | 설명 | 전달 데이터 |
+|-------|------|-------------|
+| 1 | 1차 분석 (키워드 추출) | `place_id`, `round`, `keywords[]` (키워드 문자열 목록) |
+| 2 | 2차 분석 (순위/검색량 포함) | `place_id`, `round`, `keywords[]` (키워드 + score + 순위 + 검색량 + 경쟁도) |
 
 ---
 
-## 향후 계획
+## 환경 변수 설명
 
-- STAGE 3.5 의미 중복 키워드 병합 (`semantic_dedup`)
-- 로직 튜닝을 통해 결과값 개선
-- `get_keyword_trend()` · `get_competitor_ranks()` · `get_gap_keywords()` 구현
-- FastAPI 엔드포인트 연동
-- 감성 사전(`SentiWord_info.json`) 실연결
+| 변수 | 설명 |
+|------|------|
+| `READ_DB_*` | 크롤링 원본 데이터 읽기용 DB (PostgreSQL) |
+| `WRITE_DB_*` | 분석 결과 저장용 로컬 DB (PostgreSQL) |
+| `JAVA_HOME` | KoNLPy 형태소 분석기 실행을 위한 JDK 경로 |
+
+`.env.example`을 참고하여 `.env` 파일 생성
+
+```env
+READ_DB_USER=
+READ_DB_PASSWORD=
+READ_DB_HOST=
+READ_DB_PORT=
+READ_DB_NAME=
+
+WRITE_DB_USER=
+WRITE_DB_PASSWORD=
+WRITE_DB_HOST=
+WRITE_DB_PORT=
+WRITE_DB_NAME=
+
+JAVA_HOME=
+```
+
+---
+
+## SEO 점수 구성
+
+| 항목 | 계산 방식 | 사용 데이터 |
+|------|-----------|-------------|
+| 매장 정보 완성도 | 소개글, 사진, 메뉴 여부 | 크롤링 데이터 |
+| 리뷰 품질 | 리뷰 일관성, 개수 등 | `score`, `consistency_score` |
+| 노출 점수 | 같은 지역/업종 검색 시 매장 노출 등수 | 순위 데이터 |
+| 순위 관리 상태 | 순위 변동 여부 | `rank_no_change` |
+
+---
+
+### 점수 등급
+
+| 점수 | 등급 |
+|------|------|
+| 80~100 | 🟢 우수 |
+| 60~79 | 🟡 보통 |
+| 40~59 | 🟠 미흡 |
+| 0~39 | 🔴 취약 |
+
+---
+
+## 향후 개발 예정
+
+- **감성 분석 연동** (Phase 2): `sentiment.py` 기반 부정 리뷰 필터링으로 리뷰 기반 피드백 정확도 향상
+- **경쟁업체 피드백 구현**: 경쟁 매장 대비 gap 기반 피드백 제공
+- **사전 확장**: `expression_dictionary`, `semantic_dictionary` 지속 보완
