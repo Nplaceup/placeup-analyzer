@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>파이프라인 상세 예시 — 삼겹마을</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  padding: 32px 28px;
+  max-width: 960px;
+  margin: 0 auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+h1 { font-size: 19px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px; }
+.meta { font-size: 11px; color: #64748b; margin-bottom: 36px; }
+
+.stage {
+  border-radius: 10px;
+  border: 1.5px solid #1e293b;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.stage-header {
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: 0.3px;
+}
+.stage-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.s-trigger .stage-header { background: #1e3a5f; color: #93c5fd; border-bottom: 1px solid #1e3a5f; }
+.s-trigger { border-color: #3b82f6; }
+.s-db .stage-header { background: #1a2535; color: #94a3b8; border-bottom: 1px solid #1e293b; }
+.s-db { border-color: #334155; }
+.s-user .stage-header { background: #1a2535; color: #a5b4fc; border-bottom: 1px solid #1e293b; }
+.s-user { border-color: #6366f1; }
+.s-base .stage-header { background: #0c2233; color: #67e8f9; border-bottom: 1px solid #0e2a3d; }
+.s-base { border-color: #0891b2; }
+.s-nlp .stage-header { background: #1a0f2e; color: #c4b5fd; border-bottom: 1px solid #1e1235; }
+.s-nlp { border-color: #7c3aed; }
+.s-comp .stage-header { background: #1a1205; color: #fcd34d; border-bottom: 1px solid #1f1508; }
+.s-comp { border-color: #d97706; }
+.s-blend .stage-header { background: #1a1a35; color: #a5b4fc; border-bottom: 1px solid #1e1e3a; }
+.s-blend { border-color: #6366f1; }
+.s-fmt .stage-header { background: #1a0f2e; color: #c4b5fd; border-bottom: 1px solid #1e1235; }
+.s-fmt { border-color: #7c3aed; }
+.s-seo .stage-header { background: #162032; color: #7dd3fc; border-bottom: 1px solid #1a2535; }
+.s-seo { border-color: #0ea5e9; }
+.s-redis .stage-header { background: #1f1212; color: #fca5a5; border-bottom: 1px solid #221515; }
+.s-redis { border-color: #ef4444; }
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.col { flex: 1; min-width: 200px; }
+
+.block {
+  background: #1a2535;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.block-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 6px;
+  color: #64748b;
+}
+
+.input-block  { background: #111827; border: 1px solid #1e293b; }
+.output-block { background: #0f1f12; border: 1px solid #166534; }
+.calc-block   { background: #17102a; border: 1px solid #3b0764; }
+.ref-block    { background: #1a1508; border: 1px dashed #d97706; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.tag {
+  font-size: 10px;
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-weight: 500;
+}
+.t-search  { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+.t-mktg    { background: #1a2a1a; color: #86efac; border: 1px solid #22c55e; }
+.t-neutral { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+.t-new     { background: #14532d; color: #86efac; border: 1px solid #16a34a; }
+.t-warn    { background: #1c1108; color: #fcd34d; border: 1px solid #d97706; }
+
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+th { background: #1e293b; color: #94a3b8; padding: 5px 8px; text-align: left; font-weight: 600; }
+td { padding: 5px 8px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+tr:last-child td { border-bottom: none; }
+.score-high { color: #4ade80; font-weight: 600; }
+.score-mid  { color: #facc15; }
+.score-low  { color: #94a3b8; }
+
+.arrow-down { text-align: center; color: #334155; font-size: 16px; margin: 4px 0; }
+
+.badge {
+  font-size: 9px; font-weight: 700; border-radius: 3px;
+  padding: 1px 5px; vertical-align: middle; margin-left: 4px;
+}
+.b-new  { background: #16a34a; color: #fff; }
+.b-skip { background: #475569; color: #cbd5e1; }
+.b-soon { background: #b45309; color: #fff; }
+
+.pill {
+  display: inline-block; font-size: 10px; border-radius: 10px;
+  padding: 1px 8px; font-weight: 600;
+}
+.p-search { background: #1e3a5f; color: #93c5fd; }
+.p-mktg   { background: #1a2a1a; color: #86efac; }
+
+.note {
+  font-size: 11px; color: #64748b;
+  background: #111827; border-left: 3px solid #1e293b;
+  padding: 7px 10px; border-radius: 0 4px 4px 0;
+}
+
+/* 데이터 참조 화살표 */
+.ref-arrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #d97706;
+  background: #1a1508;
+  border: 1px dashed #d97706;
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+</style>
+</head>
+<body>
+
+<h1>파이프라인 상세 예시</h1>
+<p class="meta">예시 매장 — <strong style="color:#f1f5f9">삼겹마을</strong> (강남구 역삼동 · 육류,고기요리 · 리뷰 20개 → early_growth)</p>
+
+<!-- BACKEND -->
+<div class="stage s-trigger">
+  <div class="stage-header">▶ Backend → Python 파이프라인 진입</div>
+  <div class="stage-body">
+    <div class="block input-block">
+      <div class="block-title">Redis 큐 수신</div>
+      <code style="color:#93c5fd">{ "place_id": 42 }</code>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 0 -->
+<div class="stage s-db">
+  <div class="stage-header">STAGE 0 — DB 조회</div>
+  <div class="stage-body">
+    <div class="row">
+      <div class="block input-block col">
+        <div class="block-title">place_info</div>
+        name: 삼겹마을<br/>
+        category: <strong style="color:#67e8f9">"육류,고기요리"</strong><br/>
+        neighborhood: 역삼동<br/>
+        city: 강남구
+      </div>
+      <div class="block input-block col">
+        <div class="block-title">reviews (20개 샘플)</div>
+        "삼겹살이 정말 두툼하고 육즙이 풍부해요"<br/>
+        "목살도 바삭하게 구워져서 맛있었어요"<br/>
+        "소주 한잔하기 좋은 분위기"<br/>
+        "웨이팅 있지만 친절하게 안내해줘요"<br/>
+        <span style="color:#475569">… 16개 더</span>
+      </div>
+      <div class="block input-block col">
+        <div class="block-title">rankings (최신)</div>
+        "강남맛집" → 5위<br/>
+        "역삼맛집" → 3위<br/>
+        "강남삼겹살" → 8위<br/>
+        "역삼고기집" → 12위
+      </div>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- 유형 분류 -->
+<div class="stage s-user">
+  <div class="stage-header">사용자 유형 분류</div>
+  <div class="stage-body">
+    <div class="block calc-block">
+      <div class="block-title">분류 로직</div>
+      리뷰 수 20개 → <strong style="color:#a5b4fc">early_growth</strong><br/><br/>
+      모듈 가중치: <strong style="color:#a5b4fc">base 0.3 · nlp 0.4 · competitor 0.3</strong>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓ (3개 모듈 병렬 실행)</div>
+
+<!-- ── MODULE 1 ── -->
+<div class="stage s-base">
+  <div class="stage-header">모듈1 — base_keyword_generator.py &nbsp;·&nbsp; 검증된 외부 검색 데이터</div>
+  <div class="stage-body">
+
+    <div class="block calc-block">
+      <div class="block-title">① category split <span class="badge b-new">신규</span></div>
+      <code>"육류,고기요리"</code> → <code>["육류", "고기요리"]</code>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">② 지역 + 업종 조합</div>
+      <div class="tags">
+        <span class="tag t-neutral">역삼동 육류</span>
+        <span class="tag t-neutral">역삼동 고기요리</span>
+        <span class="tag t-neutral">강남구 육류</span>
+        <span class="tag t-neutral">강남구 고기요리</span>
+        <span class="tag t-neutral">육류 맛집</span>
+      </div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">③ 지역 + 상황 조합 <span class="badge b-new">신규</span></div>
+      <div class="tags">
+        <span class="tag t-neutral">역삼동 데이트</span>
+        <span class="tag t-neutral">역삼동 혼밥</span>
+        <span class="tag t-neutral">역삼동 회식</span>
+        <span class="tag t-neutral">강남구 데이트</span>
+      </div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">④ 랜드마크 사전 조회 <span class="badge b-new">신규</span></div>
+      강남구 → <code>["강남역", "코엑스", "압구정"]</code><br/>
+      역삼동 → <code>[]</code>
+      <div class="tags" style="margin-top:6px">
+        <span class="tag t-neutral">강남역 육류</span>
+        <span class="tag t-neutral">강남역 맛집</span>
+        <span class="tag t-neutral">코엑스 맛집</span>
+      </div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">⑤ keyword_related 통합 <span class="badge b-new">신규</span></div>
+      rankings 키워드 "강남맛집"의 네이버 연관검색어 조회:<br/>
+      <div class="tags" style="margin-top:6px">
+        <span class="tag t-neutral">강남역맛집 45,200</span>
+        <span class="tag t-neutral">역삼동맛집 12,100</span>
+        <span class="tag t-neutral" style="opacity:0.45">성수맛집 125,300 ✗</span>
+        <span class="tag t-neutral" style="opacity:0.45">홍대맛집 98,400 ✗</span>
+      </div>
+      <div style="margin-top:8px; font-size:11px;">
+        위치 필터(역삼동·강남 포함) 통과 → 검색량 상위 15개<br/>
+        점수: (search_vol / max_vol) × 0.9
+      </div>
+      <table style="margin-top:8px">
+        <tr><th>키워드</th><th>검색량</th><th>점수</th></tr>
+        <tr><td>강남역맛집</td><td>45,200</td><td class="score-high">0.900</td></tr>
+        <tr><td>역삼동맛집</td><td>12,100</td><td class="score-mid">0.241</td></tr>
+      </table>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">⑥ 검색량 조회 → 점수 정규화</div>
+      <table>
+        <tr><th>키워드</th><th>검색량</th><th>점수</th></tr>
+        <tr><td>강남역 맛집</td><td>12,400</td><td class="score-high">1.00</td></tr>
+        <tr><td>강남구 데이트</td><td>8,900</td><td class="score-mid">0.72</td></tr>
+        <tr><td>역삼동 데이트</td><td>3,200</td><td class="score-mid">0.26</td></tr>
+        <tr><td>역삼동 육류</td><td>0</td><td class="score-low">0.60 (fallback)</td></tr>
+        <tr><td>강남구 고기요리</td><td>0</td><td class="score-low">0.50 (fallback)</td></tr>
+      </table>
+      <div class="note" style="margin-top:8px">검색량 0인 항목은 fallback 점수로 포함되나 블렌딩 후 자연히 탈락</div>
+    </div>
+
+    <div class="block output-block">
+      <div class="block-title">모듈1 출력 (주요)</div>
+      <div class="tags">
+        <span class="tag t-search">강남역맛집 · 0.900</span>
+        <span class="tag t-search">강남역 맛집 · 1.00</span>
+        <span class="tag t-search">강남구 데이트 · 0.72</span>
+        <span class="tag t-search">역삼동맛집 · 0.241</span>
+        <span class="tag t-search">역삼동 데이트 · 0.26</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- ── MODULE 2 ── -->
+<div class="stage s-nlp">
+  <div class="stage-header">모듈2 — NLP 파이프라인 &nbsp;·&nbsp; 리뷰 텍스트 분석</div>
+  <div class="stage-body">
+
+    <div class="block calc-block">
+      <div class="block-title">STAGE 1 — 형태소 분석 (Okt POS)</div>
+      "삼겹살이 정말 두툼하고 육즙이 풍부해요" → <strong style="color:#c4b5fd">삼겹살, 육즙</strong><br/>
+      "목살도 바삭하게 구워져서" → <strong style="color:#c4b5fd">목살, 바삭</strong><br/>
+      "소주 한잔하기 좋은 분위기" → <strong style="color:#c4b5fd">소주, 분위기</strong><br/>
+      "웨이팅 있지만 친절하게" → <strong style="color:#c4b5fd">웨이팅, 친절</strong>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">STAGE 1a — 블랙리스트 필터 + 표현 통일</div>
+      "맛있어요" → 블랙리스트 제거 &nbsp;|&nbsp; "바삭바삭" → "바삭" 정규화
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">STAGE 1b — TF-IDF 계산</div>
+      <table>
+        <tr><th>키워드</th><th>TF-IDF</th><th>등장 리뷰 수</th></tr>
+        <tr><td>삼겹살</td><td class="score-high">0.821</td><td>14 / 20</td></tr>
+        <tr><td>육즙</td><td class="score-high">0.743</td><td>11 / 20</td></tr>
+        <tr><td>목살</td><td class="score-mid">0.612</td><td>9 / 20</td></tr>
+        <tr><td>바삭</td><td class="score-mid">0.488</td><td>7 / 20</td></tr>
+        <tr><td>분위기</td><td class="score-mid">0.402</td><td>6 / 20</td></tr>
+        <tr><td>소주</td><td class="score-low">0.301</td><td>5 / 20</td></tr>
+        <tr><td>웨이팅</td><td class="score-low">0.287</td><td>5 / 20</td></tr>
+        <tr><td>친절</td><td class="score-low">0.251</td><td>4 / 20</td></tr>
+      </table>
+    </div>
+
+    <div class="block input-block" style="border-left: 3px solid #475569; opacity:0.5">
+      <div class="block-title">STAGE 2 — N-gram PMI <span class="badge b-skip">스킵</span></div>
+      USE_BIGRAM=False → 전체 스킵
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">STAGE 2.5 — rankings 병합 (CASE A/B/C)</div>
+      <table>
+        <tr><th>키워드</th><th>CASE</th><th>처리</th></tr>
+        <tr><td>삼겹살</td><td><span class="pill p-mktg">C</span></td><td>NLP만 → TF-IDF 점수 그대로</td></tr>
+        <tr><td>강남맛집</td><td><span class="pill p-search">B</span></td><td>rankings만 → 검색량 기반 합성 점수</td></tr>
+        <tr><td>역삼맛집</td><td><span class="pill p-search">B</span></td><td>rankings만 → 합성 점수</td></tr>
+      </table>
+      <div class="note" style="margin-top:8px">CASE A (NLP∩rankings) = 0개</div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">STAGE 3 — 스코어링 (tfidf + 최신성 + 일관성)</div>
+      <table>
+        <tr><th>키워드</th><th>tfidf</th><th>최신성</th><th>일관성</th><th>최종 score</th></tr>
+        <tr><td>삼겹살</td><td>0.821</td><td>0.90</td><td>0.85</td><td class="score-high">0.849</td></tr>
+        <tr><td>육즙</td><td>0.743</td><td>0.88</td><td>0.80</td><td class="score-high">0.784</td></tr>
+        <tr><td>목살</td><td>0.612</td><td>0.82</td><td>0.75</td><td class="score-mid">0.661</td></tr>
+        <tr><td>소주</td><td>0.301</td><td>0.65</td><td>0.55</td><td class="score-low">0.295</td></tr>
+      </table>
+      <div class="note" style="margin-top:8px">감성 점수 <span class="badge b-soon">구현 예정</span> — 현재 미반영</div>
+    </div>
+
+    <div class="block output-block">
+      <div class="block-title">모듈2 출력 (주요)</div>
+      <div class="tags">
+        <span class="tag t-neutral">삼겹살 · 0.849</span>
+        <span class="tag t-neutral">육즙 · 0.784</span>
+        <span class="tag t-neutral">목살 · 0.661</span>
+        <span class="tag t-neutral">소주 · 0.295</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- ── MODULE 3 ── -->
+<div class="stage s-comp">
+  <div class="stage-header">모듈3 — competitor_analyzer.py</div>
+  <div class="stage-body">
+
+    <div class="block calc-block">
+      <div class="block-title">경쟁업체 조회</div>
+      category="육류,고기요리" + city="강남구" → 리뷰순 상위 10개 업체
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">Gap 분석</div>
+      경쟁업체 리뷰 자주 등장, 삼겹마을 리뷰엔 없는 키워드:
+      <div class="tags" style="margin-top:6px">
+        <span class="tag t-warn">차돌박이</span>
+        <span class="tag t-warn">냉삼</span>
+        <span class="tag t-warn">우삼겹</span>
+      </div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">Rankings 역전 키워드</div>
+      <div class="tags">
+        <span class="tag t-warn">강남삼겹살 (삼겹마을 8위 / 경쟁업체 3위)</span>
+      </div>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">카테고리 분포 분석 — 결과 객체 보존</div>
+      <table>
+        <tr><th>카테고리</th><th>삼겹마을</th><th>경쟁업체 평균</th><th>차이</th></tr>
+        <tr><td>음식(메뉴)</td><td>40%</td><td>38%</td><td style="color:#4ade80">+2%</td></tr>
+        <tr><td>맛</td><td>25%</td><td>22%</td><td style="color:#4ade80">+3%</td></tr>
+        <tr><td>분위기</td><td>15%</td><td>25%</td><td style="color:#ef4444">-10%</td></tr>
+        <tr><td>서비스</td><td>20%</td><td>15%</td><td style="color:#4ade80">+5%</td></tr>
+      </table>
+      <div class="note" style="margin-top:8px">
+        이 결과 객체는 STAGE 7 seo_feedback에서 그대로 참조됨 — 재계산 없음
+      </div>
+    </div>
+
+    <div class="block output-block">
+      <div class="block-title">모듈3 출력</div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap">
+        <div style="flex:1; min-width:160px">
+          <div style="font-size:10px; color:#d97706; font-weight:700; margin-bottom:4px">→ 블렌딩 입력</div>
+          <div class="tags">
+            <span class="tag t-warn">차돌박이</span>
+            <span class="tag t-warn">냉삼</span>
+            <span class="tag t-warn">강남삼겹살</span>
+          </div>
+        </div>
+        <div style="flex:1; min-width:160px">
+          <div style="font-size:10px; color:#d97706; font-weight:700; margin-bottom:4px">→ STAGE 7 참조용 보존</div>
+          <div class="tags">
+            <span class="tag t-warn">카테고리 분포 데이터</span>
+            <span class="tag t-warn">gap 키워드 목록</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- BLENDING -->
+<div class="stage s-blend">
+  <div class="stage-header">keyword_blender — 가중치 합산 + 중복 제거</div>
+  <div class="stage-body">
+    <div class="block calc-block">
+      <div class="block-title">early_growth 가중치 적용</div>
+      <table>
+        <tr><th>키워드</th><th>소스</th><th>원점수</th><th>가중치</th><th>블렌딩 점수</th></tr>
+        <tr><td>강남역 맛집</td><td>모듈1 (base)</td><td>1.000</td><td>×0.3</td><td class="score-high">0.300</td></tr>
+        <tr><td>강남역맛집</td><td>모듈1 (related)</td><td>0.900</td><td>×0.3</td><td class="score-high">0.270</td></tr>
+        <tr><td>삼겹살</td><td>모듈2 (NLP)</td><td>0.849</td><td>×0.4</td><td class="score-high">0.340</td></tr>
+        <tr><td>육즙</td><td>모듈2 (NLP)</td><td>0.784</td><td>×0.4</td><td class="score-mid">0.314</td></tr>
+        <tr><td>강남구 데이트</td><td>모듈1 (base)</td><td>0.720</td><td>×0.3</td><td class="score-mid">0.216</td></tr>
+        <tr><td>차돌박이</td><td>모듈3 (comp)</td><td>0.650</td><td>×0.3</td><td class="score-mid">0.195</td></tr>
+      </table>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">중복 제거 <span class="badge b-new">신규</span></div>
+      "강남역맛집" (related · 0.270) + "강남역 맛집" (base · 0.300)<br/>
+      → 동일 키워드 → <strong style="color:#a5b4fc">최고점 0.300 유지, source 병합 (base + related)</strong>
+    </div>
+
+    <div class="block output-block">
+      <div class="block-title">블렌딩 결과 (TOP 30 선택)</div>
+      <div class="tags">
+        <span class="tag t-neutral">삼겹살 · 0.340</span>
+        <span class="tag t-neutral">육즙 · 0.314</span>
+        <span class="tag t-neutral">강남역맛집 · 0.300</span>
+        <span class="tag t-neutral">강남구 데이트 · 0.216</span>
+        <span class="tag t-neutral">차돌박이 · 0.195</span>
+        <span style="color:#475569; font-size:11px">… 25개 더</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 4 -->
+<div class="stage s-fmt">
+  <div class="stage-header">STAGE 4 — keyword_formatter.py 재설계 <span class="badge b-new">신규</span></div>
+  <div class="stage-body">
+
+    <div class="block calc-block">
+      <div class="block-title">① semantic 태깅</div>
+      <table>
+        <tr><th>키워드</th><th>category</th><th>property</th><th>mapping</th></tr>
+        <tr><td>삼겹살</td><td style="color:#c4b5fd">음식</td><td>메뉴명/육류</td><td>dictionary</td></tr>
+        <tr><td>육즙</td><td style="color:#c4b5fd">맛</td><td>식감/풍미</td><td>dictionary</td></tr>
+        <tr><td>목살</td><td style="color:#c4b5fd">음식</td><td>메뉴명/육류</td><td>dictionary</td></tr>
+        <tr><td>차돌박이</td><td style="color:#475569">미분류</td><td>—</td><td>unmapped</td></tr>
+        <tr><td>강남역맛집</td><td style="color:#475569">미분류</td><td>—</td><td>unmapped</td></tr>
+        <tr><td>분위기</td><td style="color:#c4b5fd">분위기</td><td>감성</td><td>dictionary</td></tr>
+      </table>
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">② 메뉴 키워드 → search 변환</div>
+      category="음식" + property="메뉴명/육류" → 지역 결합<br/><br/>
+      <strong style="color:#c4b5fd">삼겹살</strong> →
+      <span class="tag t-search" style="margin-left:4px">역삼동 삼겹살</span>
+      <span class="tag t-search">강남구 삼겹살</span><br/><br/>
+      <strong style="color:#c4b5fd">목살</strong> →
+      <span class="tag t-search" style="margin-left:4px">역삼동 목살</span>
+      <span class="tag t-search">강남구 목살</span><br/><br/>
+      <strong style="color:#475569">차돌박이</strong> (미분류) → 지역 결합 스킵 (문제5 보류)
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">③ 나머지 → marketing 확정</div>
+      <div class="tags">
+        <span class="tag t-mktg">육즙 (맛/식감풍미)</span>
+        <span class="tag t-mktg">분위기 (분위기/감성)</span>
+        <span class="tag t-mktg">친절 (서비스/친절도)</span>
+        <span class="tag t-mktg">바삭 (맛/식감풍미)</span>
+      </div>
+    </div>
+
+    <div class="block output-block">
+      <div class="block-title">STAGE 4 최종 출력</div>
+      <table>
+        <tr><th>키워드</th><th>purpose</th><th>score</th></tr>
+        <tr><td>역삼동 삼겹살</td><td><span class="pill p-search">search</span></td><td class="score-high">0.340</td></tr>
+        <tr><td>강남구 삼겹살</td><td><span class="pill p-search">search</span></td><td class="score-high">0.340</td></tr>
+        <tr><td>삼겹살</td><td><span class="pill p-mktg">marketing</span></td><td class="score-high">0.340</td></tr>
+        <tr><td>육즙</td><td><span class="pill p-mktg">marketing</span></td><td class="score-mid">0.314</td></tr>
+        <tr><td>강남역맛집</td><td><span class="pill p-search">search</span></td><td class="score-mid">0.300</td></tr>
+        <tr><td>강남구 데이트</td><td><span class="pill p-search">search</span></td><td class="score-mid">0.216</td></tr>
+        <tr><td>역삼동 목살</td><td><span class="pill p-search">search</span></td><td class="score-mid">0.209</td></tr>
+        <tr><td>분위기</td><td><span class="pill p-mktg">marketing</span></td><td class="score-low">0.185</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 5 -->
+<div class="stage s-seo">
+  <div class="stage-header">STAGE 5 — recommend_keywords DB upsert</div>
+  <div class="stage-body">
+    <div class="block output-block">
+      <div class="block-title">recommend_keywords 테이블 적재</div>
+      keyword · score · keyword_purpose (search / marketing) · category · property
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 6 -->
+<div class="stage s-seo">
+  <div class="stage-header">STAGE 6 — seo_scorer (round=2)</div>
+  <div class="stage-body">
+    <div class="block calc-block">
+      <div class="block-title">SEO 점수 산출</div>
+      rankings 데이터 기반 현재 노출 점수 계산<br/>
+      recommend_keywords의 search 키워드 커버리지 평가
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 7 -->
+<div class="stage s-seo">
+  <div class="stage-header">STAGE 7 — seo_feedback</div>
+  <div class="stage-body">
+
+    <div class="ref-arrow">
+      📦 모듈3 결과 객체 참조 — 별도 경쟁업체 분석 없이 재사용
+    </div>
+
+    <div class="block calc-block">
+      <div class="block-title">피드백 생성</div>
+      모듈3 카테고리 분포 데이터 참조:<br/>
+      → <strong style="color:#ef4444">분위기 키워드 비중 15% (경쟁업체 평균 25% 대비 -10%)</strong><br/>
+      → "감성/분위기 관련 콘텐츠 보강 권장"<br/><br/>
+      모듈3 gap 키워드 참조:<br/>
+      → "차돌박이, 냉삼 — 경쟁업체 대비 메뉴 다양성 강화 기회"
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 8 -->
+<div class="stage s-seo">
+  <div class="stage-header">STAGE 8 — seo_results DB upsert</div>
+  <div class="stage-body">
+    <div class="block output-block">
+      <div class="block-title">seo_results 테이블 적재</div>
+      SEO 점수 + 피드백 텍스트 저장
+    </div>
+  </div>
+</div>
+<div class="arrow-down">↓</div>
+
+<!-- STAGE 9 -->
+<div class="stage s-redis">
+  <div class="stage-header">STAGE 9 — Redis 큐 완료 알림 적재</div>
+  <div class="stage-body">
+    <div class="block input-block">
+      <div class="block-title">Redis 응답 페이로드</div>
+      <code style="color:#fca5a5">{ "place_id": 42, "status": "done", "timestamp": "..." }</code><br/><br/>
+      Backend 수신 → 클라이언트로 분석 완료 전달
+    </div>
+  </div>
+</div>
+
+<div style="text-align:center; margin-top:40px; font-size:10px; color:#334155">
+  Nplaceup · 파이프라인 예시 walkthrough v2 · 2026
+</div>
+
+</body>
+</html>

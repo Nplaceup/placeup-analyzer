@@ -361,7 +361,7 @@
   <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> NLP 엔진</div>
   <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> N-gram · PMI</div>
   <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> 스코어링</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div> 포매터 (유도어 결합)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div> 포매터 (지역+메뉴 변환)</div>
   <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div> 결과 저장</div>
   <div class="legend-item">
     <div class="legend-dash" style="border-color:#d97706"></div>
@@ -741,17 +741,37 @@
   </div>
 
   <!-- ════════════════════════════
-       STAGE 4 · Formatter
+       STAGE 4 · Formatter (재설계)
   ════════════════════════════ -->
   <div class="stage t-fmt">
     <div class="stage-label">
       <div class="s-tag">Formatter</div>
       <div class="s-file">keyword_formatter.py</div>
-      <div class="s-file">attach_inducement()</div>
-      <span class="s-status st-done">✓ 완료</span>
+      <div class="s-file">format_keywords()</div>
+      <span class="s-status st-wip">🔧 재설계</span>
       <span class="s-status st-todo">similarity fallback Phase 2</span>
     </div>
     <div class="stage-body">
+
+      <div class="proc-group">
+        <div class="proc-group-title">재설계 배경 — 유도어 결합 방식 폐기</div>
+        <div class="proc-row t-fmt">
+          <div class="proc-fn" style="color:#94a3b8;text-decoration:line-through;min-width:200px;">기존: 유도어 결합</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            NLP 키워드 → 유도어 결합 ("파스타 맛집" · "파스타 현지인맛집" 등 최대 8개 파생)<br>
+            <span style="color:#ef4444;">문제: 비자연적 조합 생성 · 실제 검색 패턴 미반영</span>
+          </div>
+        </div>
+        <div class="proc-row t-fmt">
+          <div class="proc-fn">변경: 소스 분리</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">
+            메뉴 키워드 → 지역+메뉴 조합으로 <b style="color:#6ee7b7;">search</b> 변환<br>
+            나머지 NLP 키워드 → <b style="color:#a78bfa;">marketing</b> 원본 유지 (SEO 피드백·카테고리 분석 활용)
+          </div>
+        </div>
+      </div>
 
       <div class="proc-group">
         <div class="proc-group-title">Step 1 · 의미 태깅 — semantic_dictionary.py · get_semantic_tag()</div>
@@ -788,39 +808,59 @@
       </div>
 
       <div class="proc-group">
-        <div class="proc-group-title">Step 2 · purpose 결정 — category_mapper.py · CategoryMapper.assign_purpose()</div>
-        <div class="proc-row t-fmt">
-          <div class="proc-fn">PURPOSE_RULES[(cat, prop)]</div>
-          <div class="proc-arrow">→</div>
-          <div class="proc-desc">
-            (category, property) 튜플 → "search" | "marketing" · 같은 category 내에서도 property로 세분화<br>
-            CATEGORY_DEFAULT[category] 폴백 (property 미등록 시)
-          </div>
-        </div>
+        <div class="proc-group-title">Step 2 · 분기 결정 — (category, property) → search 변환 vs marketing 유지</div>
         <div class="decision-box t-fmt" style="margin-top:6px;">
-          <div class="decision-title"><span>⬡</span> (category, property) → purpose → 유도어 여부</div>
+          <div class="decision-title"><span>⬡</span> (category, property) → 처리 방식 → 결과</div>
           <div class="decision-rows">
-            <div class="decision-row"><span class="d-cond cond-food" style="font-size:9px;">음식 / 메뉴명/*</span><span class="d-purpose p-search">search</span><span class="d-result">맛집 · 추천 · 가성비 · 현지인맛집 · 웨이팅 · 후기좋은 · 데이트 · 혼밥</span></div>
-            <div class="decision-row"><span class="d-cond cond-taste" style="font-size:9px;">맛 / 식감/풍미</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY) · "바삭 맛집" 어색</span></div>
-            <div class="decision-row"><span class="d-cond cond-taste" style="font-size:9px;">맛 / 온도</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
-            <div class="decision-row"><span class="d-cond cond-svc" style="font-size:9px;">서비스 / 친절도</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY)</span></div>
-            <div class="decision-row"><span class="d-cond cond-svc" style="font-size:9px;">서비스 / 속도</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
-            <div class="decision-row"><span class="d-cond cond-place" style="font-size:9px;">장소 / 위치</span><span class="d-purpose p-search">search</span><span class="d-result">유도어 스킵 (NO_INDUCEMENT_PROPERTY)</span></div>
-            <div class="decision-row"><span class="d-cond cond-place" style="font-size:9px;">장소 / 편의/시설</span><span class="d-purpose p-market">marketing</span><span class="d-result">유도어 없음 · 콘텐츠용</span></div>
-            <div class="decision-row"><span class="d-cond cond-none">미분류</span><span class="d-purpose p-market">marketing</span><span class="d-result">Fallback · 유도어 없음</span></div>
+            <div class="decision-row">
+              <span class="d-cond cond-food" style="font-size:9px;">음식 / 메뉴명<br>육류·해산물<br>면류·밥류·국</span>
+              <span class="d-purpose p-search">search 변환</span>
+              <span class="d-result">{neighborhood} {메뉴} · {city} {메뉴} 생성<br>"파스타" → "역삼동 파스타" · "강남구 파스타"</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-food" style="font-size:9px;">음식 / 메뉴명<br>음료·디저트</span>
+              <span class="d-purpose p-search">조건부 search</span>
+              <span class="d-result">place_category="카페" 일 때만 지역+메뉴 변환<br>그 외 → marketing 처리 ("아메리카노 맛집" 어색)</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-taste" style="font-size:9px;">맛 / 전체</span>
+              <span class="d-purpose p-market">marketing</span>
+              <span class="d-result">원본 유지 · SEO 피드백·카테고리 분석용<br>"육즙" · "바삭" · "매콤"</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-svc" style="font-size:9px;">서비스 / 전체</span>
+              <span class="d-purpose p-market">marketing</span>
+              <span class="d-result">원본 유지 · 콘텐츠·피드백용<br>"친절" · "웨이팅" · "가성비"</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-mood" style="font-size:9px;">분위기 / 전체</span>
+              <span class="d-purpose p-market">marketing</span>
+              <span class="d-result">원본 유지 · 콘텐츠용<br>"감성" · "아늑" · "조용"</span>
+            </div>
+            <div class="decision-row">
+              <span class="d-cond cond-none">미분류</span>
+              <span class="d-purpose p-market">marketing</span>
+              <span class="d-result">지역 결합 스킵 · 원본 유지<br>semantic_dict 미등록 키워드</span>
+            </div>
           </div>
         </div>
       </div>
 
       <div class="proc-group">
-        <div class="proc-group-title">Step 3 · 유도어 결합 — inducement_dict.py · get_inducements()</div>
+        <div class="proc-group-title">Step 3 · 지역+메뉴 search 키워드 생성 (기존 유도어 결합 대체)</div>
         <div class="proc-row t-fmt">
-          <div class="proc-fn">get_inducements(cat, prop)</div>
+          <div class="proc-fn">_build_location_keywords<br>(keyword, place_context)</div>
           <div class="proc-arrow">→</div>
           <div class="proc-desc">
-            purpose=search 키워드만 유도어 결합 · NO_INDUCEMENT_PROPERTY 해당 시 빈 리스트 반환<br>
-            원본(is_induced=False) + 유도어 결합형(is_induced=True, is_ngram=True) 모두 저장
+            place_context: {neighborhood, city} 주입<br>
+            생성: <b style="color:#6ee7b7;">["{neighborhood} {keyword}", "{city} {keyword}"]</b><br>
+            base_score 상속 · keyword_purpose="search" · is_location_combined=True
           </div>
+        </div>
+        <div class="proc-row t-fmt" style="opacity:0.45;">
+          <div class="proc-fn" style="text-decoration:line-through;">get_inducements(cat, prop)</div>
+          <div class="proc-arrow">→</div>
+          <div class="proc-desc">유도어 결합 로직 제거 — "파스타 현지인맛집" · "아메리카노 웨이팅" 등 비자연적 조합 폐기</div>
         </div>
       </div>
 
@@ -829,7 +869,8 @@
         <div>
           <div class="io-label">Output</div>
           <div class="io-content">
-            [{keyword, base_score, is_ngram, is_induced, <span style="color:#34d399;">keyword_purpose, category, property, mapping_type</span>}, ...]
+            [{keyword, base_score, <span style="color:#34d399;">keyword_purpose ("search"|"marketing")</span>, category, property, mapping_type, is_location_combined}, ...]<br>
+            <span style="color:#475569;font-size:10px;">search 예: "역삼동 파스타" · "강남구 한우" &nbsp;/&nbsp; marketing 예: "육즙" · "아늑한 분위기" · "친절"</span>
           </div>
         </div>
       </div>
@@ -842,7 +883,7 @@
       <div class="connector-arrow">
         <div class="arr-line"></div>
         <div class="arr-head">▼</div>
-        <span class="arr-label">[{keyword, score, category, property, keyword_purpose, is_ngram, is_induced}]</span>
+        <span class="arr-label">[{keyword, score, category, property, keyword_purpose, is_location_combined}]</span>
       </div>
     </div>
   </div>
