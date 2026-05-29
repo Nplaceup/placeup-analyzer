@@ -88,14 +88,15 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     user_type = classify_user_type(len(reviews))
     weights   = get_module_weights(user_type)
-    base_kws  = generate_base_keywords(place_info) if place_info else []
+    base_kws  = generate_base_keywords(place_info, place_id=place_id, round_no=round_no) if place_info else []
 
     _sep(f"사용자 유형 분류 + 모듈1 · 기본 키워드")
     print(f"  사용자 유형    : {user_type}")
     print(f"  모듈 가중치    : base={weights['base']}  nlp={weights['nlp']}  competitor={weights['competitor']}")
     print(f"  기본 키워드    : {len(base_kws)}개")
     for item in base_kws[:10]:
-        print(f"    {item['keyword']:<22} 검색량={item['monthly_search_volume']:>8,}  score={item['score']:.4f}")
+        score_str = f"{item['score']:.4f}" if item["score"] is not None else "None"
+        print(f"    {item['keyword']:<22} 검색량={item['monthly_search_volume']:>8,}  score={score_str}")
 
     # ══════════════════════════════════════════════════════════════════════
     # 모듈2 · NLP 파이프라인 (cold_start는 리뷰 부족으로 스킵)
