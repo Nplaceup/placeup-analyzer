@@ -22,6 +22,10 @@ from app.db.repository import (
 from app.data.semantic_dictionary import get_semantic_tag
 from app.core.config import COMPETITOR_LIMIT, MIN_COMPETITOR_COUNT
 
+# 크롤러 순위 추적 범위 (70위까지만 수집, 이후는 null 반환)
+# rank_gap 계산 시 null → RANK_UNTRACKED으로 처리해 누락 방지
+RANK_UNTRACKED = 71
+
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────────────
 
@@ -182,11 +186,13 @@ def analyze_competitors(
     # ── 5. rank_gap_keywords 산출 ────────────────────────────────────────────
     # 조건: 나도 있고 경쟁업체도 있는데, 경쟁업체 평균 순위 < 내 순위
     #       (숫자가 작을수록 높은 순위 — 1위가 최상위)
+    # null 처리: 크롤러가 70위까지만 추적하므로 null = RANK_UNTRACKED(71)로 처리
+    #            "경쟁업체 5위, 나는 70위 초과"인 경우를 rank_gap에 포함
     rank_gap_raw = []
     for kw in my_keywords & all_competitor_kwd:
-        my_rank = my_rank_map.get(kw)
+        my_rank = my_rank_map.get(kw, RANK_UNTRACKED)   # null → 71위로 처리
         comp_ranks = kw_ranks.get(kw, [])
-        if my_rank is None or not comp_ranks:
+        if not comp_ranks:
             continue
 
         comp_avg = sum(comp_ranks) / len(comp_ranks)
@@ -203,7 +209,7 @@ def analyze_competitors(
             "keyword":               kw,
             "score":                 gap_score * 0.7 + vol_score * 0.3,
             "source":                "competitor",
-            "my_rank_no":            my_rank,
+            "my_rank_no":            my_rank_map.get(kw),   # 원본 유지 (null = 70위 초과)
             "competitor_avg_rank":   round(comp_avg, 1),
             "rank_gap":              round(gap, 1),
             "monthly_search_volume": vol,
