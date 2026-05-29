@@ -44,7 +44,9 @@ from app.db.repository import (
 )
 
 # ── 카테고리 파싱 상수 ────────────────────────────────────────────────────────
-CATEGORY_STRIP_SUFFIXES = ["요리"]
+# 검색어로 쓰기 어색한 접미사 — 단일/복합 term 모두 strip 적용
+# 예: "고기요리" → "고기" / "돼지고기구이" → "돼지고기" / "중식당" → "중식"
+CATEGORY_STRIP_SUFFIXES = ["요리", "구이", "당"]
 
 # ── 상황어 목록 (유도어 폐기 후 보완 ──────────────────────────────────────────────
 SITUATION_WORDS = ["데이트", "혼밥", "회식"]
@@ -67,9 +69,19 @@ def _parse_category_terms(category: str) -> list[str]:
     "곱창,막창,양"  → ["곱창", "막창", "양"]
     "파스타"         → ["파스타"]
     """
+    def _strip(term: str) -> str:
+        """term 끝의 불필요 접미사 제거. 결과가 빈 문자열이면 원본 반환."""
+        for suffix in CATEGORY_STRIP_SUFFIXES:
+            if term.endswith(suffix) and len(term) > len(suffix):
+                return term[:-len(suffix)]
+        return term
+
     terms = [t.strip() for t in category.split(",") if t.strip()]
-    if len(terms) <= 1:
-        return terms
+
+    if len(terms) == 1:
+        # 단일 카테고리도 접미사 strip 적용
+        # 예: "돼지고기구이" → "돼지고기" / "중식당" → "중식"
+        return [_strip(terms[0])]
 
     sub_terms = terms[1:]
     has_suffix = any(
@@ -79,17 +91,10 @@ def _parse_category_terms(category: str) -> list[str]:
 
     if has_suffix:
         # 대분류 제거 + 접미사 strip
-        result = []
-        for term in sub_terms:
-            for suffix in CATEGORY_STRIP_SUFFIXES:
-                if term.endswith(suffix) and len(term) > len(suffix):
-                    term = term[:-len(suffix)]
-                    break
-            result.append(term)
-        return result
+        return [_strip(t) for t in sub_terms]
     else:
-        # 동등한 항목 → 전부 사용
-        return terms
+        # 동등한 항목 → 전부 사용 (접미사 strip은 적용)
+        return [_strip(t) for t in terms]
 
 
 # ── 후보 키워드 조합 생성 ─────────────────────────────────────────────────────
