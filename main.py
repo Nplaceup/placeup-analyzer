@@ -8,7 +8,7 @@ from app.services.nlp.ngram import NgramExtractor                          # STA
 from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result  # STAGE 2.5 (외부 키워드 결합)
 from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.7 (감성 분석)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
-from app.output.keyword_formatter import attach_inducement                 # STAGE 4  (카테고리 태깅 + 유도어 결합)
+from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 
 # ── 분석 모듈 ───────────────────────────────────────────────────────────────
 from app.services.analysis.user_type_classifier import classify_user_type, get_module_weights
@@ -300,11 +300,26 @@ def run(place_id: int, round_no: int = 1):
                 f"{b['recency']:>6.4f}  {b['consistency']:>6.4f}"
             )
 
-        # STAGE 3.5 · 유사도 중복 제거 (구현 예정)
-        # scored = semantic_dedup(scored)
+        # ── STAGE 3.5 ─────────────────────────────────────────────────────
+        # 모듈2 전용: 의미 태깅 + 메뉴 키워드 검색형 유도어 확장
+        # 메뉴 키워드(purpose=search)  → 원본 + 유도어 결합형 모두 블렌더 투입
+        # 나머지       (purpose=marketing) → 원본만 블렌더 투입
+        # ─────────────────────────────────────────────────────────────────
+        expanded     = expand_nlp_keywords(scored, use_similarity=True)
+        nlp_keywords = [{**item, "source": "nlp"} for item in expanded]
 
-        # NLP 결과를 blender 입력 형식으로 변환
-        nlp_keywords = [{**item, "source": "nlp"} for item in scored]
+        _sep("STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장")
+        search_kws    = [it for it in expanded if it["keyword_purpose"] == "search"]
+        marketing_kws = [it for it in expanded if it["keyword_purpose"] == "marketing"]
+        induced_kws   = [it for it in expanded if it["is_induced"]]
+        print(f"  원본 scored     : {len(scored)}개")
+        print(f"  확장 후 총 키워드 : {len(expanded)}개  "
+              f"(search={len(search_kws)}, marketing={len(marketing_kws)}, "
+              f"induced={len(induced_kws)})")
+        if induced_kws:
+            print(f"\n  [유도어 결합형 샘플]")
+            for it in induced_kws[:8]:
+                print(f"    {it['keyword']:<28}  {it['category']}/{it['property']}")
 
     # ══════════════════════════════════════════════════════════════════════
     # 모듈3 · 경쟁업체 분석
@@ -371,16 +386,15 @@ def run(place_id: int, round_no: int = 1):
         item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
 
-    _sep("STAGE 4 · 카테고리 태깅 + 유도어 결합")
-    print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개 (원본 + 유도어 결합형)")
-    print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  ngram  induced")
-    print(f"  {'-'*88}")
+    _sep("STAGE 4 · 의미 태깅 + 포맷팅")
+    print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개")
+    print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  induced")
+    print(f"  {'-'*82}")
     for item in formatted:
         print(
             f"  {item['keyword']:<24} {item['base_score']:>6.4f}  "
             f"{item['category']:<8}  {item['keyword_purpose']:<10}  "
             f"{item.get('source', ''):<12}  "
-            f"{'O' if item['is_ngram']   else 'X':^5}  "
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
