@@ -16,7 +16,7 @@ from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAG
 from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
 from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
-from app.output.keyword_formatter import attach_inducement                 # STAGE 4  (카테고리 태깅 + 유도어 결합)
+from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
 
 # ── 발표용 로컬 데이터 ────────────────────────────────────────────────────────
@@ -329,9 +329,28 @@ def run():
               f"{b['recency']:>6.4f}  {b['consistency']:>6.4f}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 4 · 카테고리 태깅 + 유도어 결합
+    # STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장
     # ══════════════════════════════════════════════════════════════════════
-    formatted = attach_inducement(scored, top_n=20, use_similarity=True)
+    expanded     = expand_nlp_keywords(scored, use_similarity=True)
+    nlp_keywords = [{**item, "source": "nlp"} for item in expanded]
+
+    _sep("STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장")
+    search_kws    = [it for it in expanded if it["keyword_purpose"] == "search"]
+    marketing_kws = [it for it in expanded if it["keyword_purpose"] == "marketing"]
+    induced_kws   = [it for it in expanded if it["is_induced"]]
+    print(f"  원본 scored      : {len(scored)}개")
+    print(f"  확장 후 총 키워드 : {len(expanded)}개  "
+          f"(search={len(search_kws)}, marketing={len(marketing_kws)}, "
+          f"induced={len(induced_kws)})")
+    if induced_kws:
+        print(f"\n  [유도어 결합형 샘플]")
+        for it in induced_kws[:8]:
+            print(f"    {it['keyword']:<28}  {it['category']}/{it['property']}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # STAGE 4 · 의미 태깅 + 포맷팅
+    # ══════════════════════════════════════════════════════════════════════
+    formatted = attach_inducement(nlp_keywords, top_n=20, use_similarity=True)
 
     for item in formatted:
         base_kw = (
@@ -348,14 +367,13 @@ def run():
         item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
 
-    _sep("STAGE 4 · 카테고리 태깅 + 유도어 결합")
-    print(f"  입력 top-20 → 출력 {len(formatted)}개 (원본 + 유도어 결합형)")
-    print(f"\n  {'키워드':<26} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  ngram  induced")
-    print(f"  {'-'*72}")
+    _sep("STAGE 4 · 의미 태깅 + 포맷팅")
+    print(f"  입력 top-20 → 출력 {len(formatted)}개")
+    print(f"\n  {'키워드':<26} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  induced")
+    print(f"  {'-'*68}")
     for item in formatted:
         print(f"  {item['keyword']:<26} {item['base_score']:>6.4f}  "
               f"{item['category']:<8}  {item['keyword_purpose']:<10}  "
-              f"{'O' if item['is_ngram']   else 'X':^5}  "
               f"{'O' if item['is_induced'] else 'X':^6}")
 
     untagged = [it for it in formatted if not it["is_induced"] and it["category"] == "미분류"]

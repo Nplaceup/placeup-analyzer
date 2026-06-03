@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>백엔드 연동 스키마 명세서 — Nplaceup NLP</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      background: #f5f6fa;
+      color: #1e2230;
+      padding: 40px 24px 80px;
+    }
+    .container { max-width: 980px; margin: 0 auto; }
+
+    /* 헤더 */
+    .doc-header {
+      background: #1a2340;
+      color: #fff;
+      border-radius: 12px;
+      padding: 32px 36px;
+      margin-bottom: 32px;
+    }
+    .doc-header .badge {
+      display: inline-block;
+      background: #10b981;
+      color: #fff;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 3px 10px; border-radius: 20px;
+      margin-bottom: 12px; text-transform: uppercase;
+    }
+    .doc-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .doc-header p  { font-size: 14px; color: #8fa3bf; line-height: 1.6; }
+
+    /* 메타 그리드 */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 14px; margin-bottom: 32px;
+    }
+    .meta-card {
+      background: #fff; border-radius: 10px;
+      padding: 16px 18px; border: 1px solid #e4e8f0;
+    }
+    .meta-card .label { font-size: 11px; color: #8892a4; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .meta-card .value { font-size: 13px; font-weight: 600; color: #1e2230; }
+    .meta-card .value code { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 12px; background: #f0f2f8; padding: 2px 6px; border-radius: 4px; }
+
+    /* 섹션 타이틀 */
+    .section-title {
+      font-size: 15px; font-weight: 700; color: #1e2230;
+      margin: 36px 0 14px;
+      padding-left: 12px;
+      border-left: 3px solid #10b981;
+    }
+
+    /* 아키텍처 흐름도 */
+    .arch-flow {
+      background: #fff;
+      border: 1px solid #e4e8f0;
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 8px;
+    }
+    .flow-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+      position: relative;
+    }
+    .flow-col { display: flex; flex-direction: column; align-items: center; }
+    .flow-col-header {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      padding: 6px 16px; border-radius: 20px;
+      margin-bottom: 20px; white-space: nowrap;
+    }
+    .hdr-java   { background: #e6edff; color: #2f54eb; }
+    .hdr-redis  { background: #e6fffa; color: #0d7a5f; }
+    .hdr-python { background: #f9f0ff; color: #531dab; }
+
+    .step-box {
+      border-radius: 8px;
+      padding: 10px 14px;
+      text-align: center;
+      font-size: 12.5px;
+      line-height: 1.5;
+      width: 100%;
+      margin-bottom: 6px;
+    }
+    .step-java   { background: #f0f4ff; border: 1px solid #adc6ff; color: #2f54eb; }
+    .step-redis  { background: #e6fffa; border: 1px solid #7ee8d0; color: #0d7a5f; }
+    .step-python { background: #f9f0ff; border: 1px solid #d3adf7; color: #531dab; }
+
+    .step-num { font-weight: 700; font-size: 13px; display: block; margin-bottom: 2px; }
+    .step-sub { font-size: 11px; color: #8892a4; font-family: 'SF Mono','Fira Mono',monospace; }
+
+    .flow-arrow-down { text-align: center; color: #adb5c7; font-size: 16px; margin: 2px 0; line-height: 1; }
+    .flow-spacer { flex: 1; }
+
+    /* 가로 화살표 표시용 */
+    .arrow-row {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: #8892a4; margin: 4px 0;
+    }
+    .arrow-row .arr { font-size: 18px; margin: 0 6px; color: #adb5c7; }
+
+    /* 페이로드 카드 */
+    .payload-section { margin-top: 28px; }
+    .payload-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 680px) { .payload-cards { grid-template-columns: 1fr; } }
+
+    .payload-card {
+      background: #fff; border: 1px solid #e4e8f0;
+      border-radius: 10px; overflow: hidden;
+    }
+    .payload-card-header {
+      padding: 10px 16px;
+      font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .ph-req  { background: #f0f4ff; color: #2f54eb; border-bottom: 1px solid #adc6ff; }
+    .ph-res  { background: #f9f0ff; color: #531dab; border-bottom: 1px solid #d3adf7; }
+
+    .payload-card-body { padding: 14px 16px; }
+
+    /* 필드 테이블 */
+    .field-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 6px;
+    }
+    .field-table thead tr { background: #f7f8fc; }
+    .field-table thead th {
+      text-align: left; padding: 9px 12px;
+      font-size: 11px; font-weight: 700;
+      color: #5a657a; text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid #e4e8f0;
+    }
+    .field-table tbody tr { border-bottom: 1px solid #f0f2f8; }
+    .field-table tbody tr:last-child { border-bottom: none; }
+    .field-table tbody tr:hover { background: #fafbff; }
+    .field-table tbody td { padding: 10px 12px; vertical-align: top; line-height: 1.55; }
+    .fn { font-family: 'SF Mono','Fira Mono',monospace; font-size: 12.5px; color: #10b981; font-weight: 600; white-space: nowrap; }
+    .ft { font-family: 'SF Mono','Fira Mono',monospace; font-size: 12px; color: #52596b; white-space: nowrap; }
+    .fd { font-size: 13px; color: #3a4155; }
+
+    .pill {
+      display: inline-block; font-size: 11.5px;
+      padding: 1px 7px; border-radius: 10px;
+      margin: 1px 2px 1px 0;
+      font-family: 'SF Mono','Fira Mono',monospace;
+    }
+    .pill.blue   { background: #e6edff; color: #2f54eb; }
+    .pill.green  { background: #e6fffa; color: #0d7a5f; }
+    .pill.orange { background: #fff7e6; color: #d46b08; }
+    .pill.red    { background: #fff0f0; color: #cf1322; }
+    .pill.gray   { background: #f0f2f8; color: #52596b; }
+    .pill.purple { background: #f9f0ff; color: #531dab; }
+    .tag-req  { background: #fff0f0; color: #cf1322; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .tag-opt  { background: #f6ffed; color: #389e0d; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+
+    .group-row td {
+      background: #f7f8fc;
+      font-size: 11px; font-weight: 700;
+      color: #8892a4; text-transform: uppercase;
+      letter-spacing: 0.08em; padding: 7px 12px;
+    }
+
+    /* JSON 블록 */
+    .json-block {
+      background: #1a2340; border-radius: 8px;
+      padding: 16px 18px; margin-top: 12px; overflow-x: auto;
+    }
+    .json-block pre {
+      font-family: 'SF Mono','Fira Mono',monospace;
+      font-size: 12.5px; line-height: 1.7; color: #cdd5e0;
+    }
+    .json-block .key  { color: #79c0ff; }
+    .json-block .str  { color: #a5d6ff; }
+    .json-block .num  { color: #f0883e; }
+    .json-block .bool { color: #d2a8ff; }
+    .json-block .null { color: #8fa3bf; }
+    .json-block .cmnt { color: #5a7a8a; font-style: italic; }
+
+    /* 일반 카드 */
+    .card {
+      background: #fff; border: 1px solid #e4e8f0;
+      border-radius: 10px; padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .card h3 { font-size: 13.5px; font-weight: 700; margin-bottom: 12px; color: #1e2230; }
+
+    /* 노트 박스 */
+    .note-box {
+      background: #fffbe6; border: 1px solid #ffd666;
+      border-radius: 8px; padding: 12px 16px;
+      font-size: 13px; color: #7c5500; line-height: 1.6; margin-top: 12px;
+    }
+    .note-box strong { font-weight: 700; }
+
+    /* Redis 키 */
+    .redis-key {
+      display: inline-block;
+      background: #e6fffa; color: #0d7a5f;
+      font-family: 'SF Mono','Fira Mono',monospace;
+      font-size: 12.5px; font-weight: 700;
+      padding: 3px 10px; border-radius: 5px;
+      border: 1px solid #7ee8d0;
+    }
+
+    .sub-title { font-size: 13px; font-weight: 700; color: #1e2230; margin: 16px 0 8px; }
+
+    footer { margin-top: 48px; text-align: center; font-size: 12px; color: #a0aabf; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- 헤더 -->
+  <div class="doc-header">
+    <div class="badge">Backend Handoff · Redis Queue</div>
+    <h1>백엔드 연동 스키마 명세서</h1>
+    <p>백엔드(Java) ↔ Redis ↔ Python 분석 모듈 간 메시지 큐 기반 연동 명세.<br>
+    Python 모듈은 REST API 없이 Redis Worker로 동작하며, 요청/결과를 모두 큐로 처리한다.</p>
+  </div>
+
+  <!-- 메타 -->
+  <div class="meta-grid">
+    <div class="meta-card">
+      <div class="label">통신 방식</div>
+      <div class="value">Redis 메시지 큐 (brpop / lpush)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">요청 큐</div>
+      <div class="value"><code>analysis:request:queue</code></div>
+    </div>
+    <div class="meta-card">
+      <div class="label">결과 큐</div>
+      <div class="value"><code>analysis:result:{requestId}</code></div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Java API 엔드포인트</div>
+      <div class="value"><code>GET /v1/openapi/place/recommend</code></div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Python 역할</div>
+      <div class="value">Redis Worker (brpop 대기)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">Java 결과 저장</div>
+      <div class="value"><code>place_recommended_keywords</code></div>
+    </div>
+  </div>
+
+
+  <!-- 아키텍처 흐름 -->
+  <div class="section-title">전체 처리 흐름</div>
+  <div class="arch-flow">
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; text-align:center; margin-bottom:20px;">
+      <div><span class="flow-col-header hdr-java">백엔드 (Java)</span></div>
+      <div><span class="flow-col-header hdr-redis">Redis</span></div>
+      <div><span class="flow-col-header hdr-python">Python 분석 모듈</span></div>
+    </div>
+
+    <!-- 각 단계를 행으로 표현 -->
+    <div style="display:flex; flex-direction:column; gap:0;">
+
+      <!-- ① -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:center;">
+        <div class="step-box step-java">
+          <span class="step-num">① 사용자 요청 수신</span>
+          <span class="step-sub">GET /v1/openapi/place/recommend</span>
+        </div>
+        <div></div>
+        <div></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div class="flow-arrow-down">↓</div><div></div><div></div>
+      </div>
+
+      <!-- ② -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:center;">
+        <div class="step-box step-java">
+          <span class="step-num">② 크롤러 호출</span>
+          <span class="step-sub">PlaceDetail + RankSearch</span>
+        </div>
+        <div></div>
+        <div></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div class="flow-arrow-down">↓</div><div></div><div></div>
+      </div>
+
+      <!-- ③ → 큐 → ④ -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:center;">
+        <div class="step-box step-java">
+          <span class="step-num">③ Redis에 전송</span>
+          <span class="step-sub">producer.send(payload)</span>
+        </div>
+        <div class="step-box step-redis" style="align-self:center;">
+          <span class="step-num">요청 큐</span>
+          <span class="step-sub">analysis:request:queue</span>
+        </div>
+        <div class="step-box step-python">
+          <span class="step-num">④ 요청 수신</span>
+          <span class="step-sub">brpop으로 대기 후 수신</span>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div style="font-size:11px; color:#adb5c7; text-align:center; padding:6px 0;">⋮ brpop 대기 중 ⋮</div>
+        <div></div>
+        <div class="flow-arrow-down">↓</div>
+      </div>
+
+      <!-- ⑤ ⑥ -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:start;">
+        <div></div>
+        <div></div>
+        <div>
+          <div class="step-box step-python" style="margin-bottom:6px;">
+            <span class="step-num">⑤ 분석 실행</span>
+            <span class="step-sub">NLP + 스코어링 → 추천 키워드</span>
+          </div>
+          <div class="flow-arrow-down">↓</div>
+          <div class="step-box step-python" style="margin-top:6px;">
+            <span class="step-num">⑥ Python DB 저장</span>
+            <span class="step-sub">recommend_keywords 테이블</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div></div><div></div><div class="flow-arrow-down">↓</div>
+      </div>
+
+      <!-- ⑦ → 결과큐 → ⑧ -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:center;">
+        <div class="step-box step-java">
+          <span class="step-num">⑧ 결과 수신</span>
+          <span class="step-sub">consumer.receive()</span>
+        </div>
+        <div class="step-box step-redis">
+          <span class="step-num">결과 큐</span>
+          <span class="step-sub">analysis:result:{requestId}</span>
+        </div>
+        <div class="step-box step-python">
+          <span class="step-num">⑦ 결과 전송</span>
+          <span class="step-sub">lpush → Redis</span>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <div class="flow-arrow-down">↓</div><div></div><div></div>
+      </div>
+
+      <!-- ⑨ ⑩ -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; align-items:start;">
+        <div>
+          <div class="step-box step-java" style="margin-bottom:6px;">
+            <span class="step-num">⑨ Java DB 저장</span>
+            <span class="step-sub">place_recommended_keywords</span>
+          </div>
+          <div class="flow-arrow-down">↓</div>
+          <div class="step-box step-java" style="margin-top:6px;">
+            <span class="step-num">⑩ 프론트 응답</span>
+            <span class="step-sub">키워드 + 검색량 + 순위</span>
+          </div>
+        </div>
+        <div></div>
+        <div></div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- 페이로드 명세 -->
+  <div class="section-title">페이로드 명세</div>
+  <div class="payload-cards">
+
+    <!-- ③ 요청 페이로드 -->
+    <div class="payload-card">
+      <div class="payload-card-header ph-req">
+        ③ 백엔드 → Redis 요청 페이로드
+        <span class="redis-key" style="margin-left:auto; font-size:11px;">analysis:request:queue</span>
+      </div>
+      <div class="payload-card-body">
+        <table class="field-table">
+          <thead><tr><th>필드</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="fn">requestId</td>
+              <td class="ft">string</td>
+              <td><span class="tag-req">필수</span></td>
+              <td class="fd">요청 고유 식별자. 결과 큐 키 생성에 사용 (<code>analysis:result:{requestId}</code>)</td>
+            </tr>
+            <tr>
+              <td class="fn">naverPlaceId</td>
+              <td class="ft">string</td>
+              <td><span class="tag-req">필수</span></td>
+              <td class="fd">네이버 플레이스 매장 고유 ID</td>
+            </tr>
+            <tr>
+              <td class="fn">placeDetail</td>
+              <td class="ft">object</td>
+              <td><span class="tag-req">필수</span></td>
+              <td class="fd">크롤링된 매장 상세 정보 (아래 상세 참고)</td>
+            </tr>
+            <tr>
+              <td class="fn">rankSearch</td>
+              <td class="ft">array</td>
+              <td><span class="tag-req">필수</span></td>
+              <td class="fd">크롤링된 키워드별 순위 데이터 (아래 상세 참고)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="sub-title">placeDetail 객체</div>
+        <table class="field-table">
+          <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td class="fn">placeName</td><td class="ft">string</td><td class="fd">매장명</td></tr>
+            <tr><td class="fn">category</td><td class="ft">string</td><td class="fd">업종 (예: "생선회", "이탈리안")</td></tr>
+            <tr><td class="fn">address</td><td class="ft">string</td><td class="fd">매장 주소 (예: "서울 강남구 역삼동")</td></tr>
+            <tr><td class="fn">reviewCount</td><td class="ft">integer</td><td class="fd">총 리뷰 수. 사용자 유형 분류(cold_start / early_growth / active) 기준</td></tr>
+          </tbody>
+        </table>
+
+        <div class="sub-title">rankSearch 배열 원소</div>
+        <table class="field-table">
+          <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td class="fn">keyword</td><td class="ft">string</td><td class="fd">순위 추적 키워드</td></tr>
+            <tr><td class="fn">rankNo</td><td class="ft">integer</td><td class="fd">현재 순위 (1 = 1위)</td></tr>
+            <tr><td class="fn">rankNoChange</td><td class="ft">integer</td><td class="fd">전일 대비 순위 변동 (+상승 / -하락 / 0 유지)</td></tr>
+            <tr><td class="fn">monthlySearchVolume</td><td class="ft">integer</td><td class="fd">월간 검색량</td></tr>
+          </tbody>
+        </table>
+
+        <div class="json-block"><pre>{
+  <span class="key">"requestId"</span>: <span class="str">"req-20250601-abc123"</span>,
+  <span class="key">"naverPlaceId"</span>: <span class="str">"863"</span>,
+  <span class="key">"placeDetail"</span>: {
+    <span class="key">"placeName"</span>: <span class="str">"삼성회포차"</span>,
+    <span class="key">"category"</span>: <span class="str">"생선회"</span>,
+    <span class="key">"address"</span>: <span class="str">"서울 강남구 삼성동"</span>,
+    <span class="key">"reviewCount"</span>: <span class="num">38</span>
+  },
+  <span class="key">"rankSearch"</span>: [
+    {
+      <span class="key">"keyword"</span>: <span class="str">"삼성 생선회"</span>,
+      <span class="key">"rankNo"</span>: <span class="num">4</span>,
+      <span class="key">"rankNoChange"</span>: <span class="num">2</span>,
+      <span class="key">"monthlySearchVolume"</span>: <span class="num">3200</span>
+    }
+  ]
+}</pre></div>
+      </div>
+    </div>
+
+    <!-- ⑦ 결과 페이로드 -->
+    <div class="payload-card">
+      <div class="payload-card-header ph-res">
+        ⑦ Python → Redis 결과 페이로드
+        <span class="redis-key" style="margin-left:auto; font-size:11px;">analysis:result:{requestId}</span>
+      </div>
+      <div class="payload-card-body">
+        <table class="field-table">
+          <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="fn">requestId</td>
+              <td class="ft">string</td>
+              <td class="fd">요청 시 전달받은 requestId 그대로 반환. Java에서 요청-결과 매핑에 사용</td>
+            </tr>
+            <tr>
+              <td class="fn">status</td>
+              <td class="ft">string</td>
+              <td class="fd"><span class="pill green">success</span> <span class="pill red">error</span></td>
+            </tr>
+            <tr>
+              <td class="fn">recommendedKeywords</td>
+              <td class="ft">array&lt;KeywordItem&gt;</td>
+              <td class="fd">추천 키워드 목록. score 내림차순 정렬</td>
+            </tr>
+            <tr>
+              <td class="fn">errorMessage</td>
+              <td class="ft">string | null</td>
+              <td class="fd">status=error 시 오류 메시지. 정상 시 null</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="sub-title">recommendedKeywords 배열 원소 (KeywordItem)</div>
+        <table class="field-table">
+          <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td class="fn">keyword</td><td class="ft">string</td><td class="fd">추천 키워드 텍스트</td></tr>
+            <tr><td class="fn">monthlySearchVolume</td><td class="ft">integer</td><td class="fd">월간 검색량. 0 = 데이터 없음</td></tr>
+            <tr><td class="fn">rankNo</td><td class="ft">integer | null</td><td class="fd">현재 네이버 플레이스 순위. null = 미순위</td></tr>
+            <tr><td class="fn">competitionLevel</td><td class="ft">string</td><td class="fd"><span class="pill red">높음</span> ≥10,000 / <span class="pill orange">중간</span> ≥1,000 / <span class="pill green">낮음</span> &lt;1,000</td></tr>
+            <tr><td class="fn">keywordPurpose</td><td class="ft">string</td><td class="fd"><span class="pill blue">search</span> SEO 최적화 대상 / <span class="pill orange">marketing</span> 광고·콘텐츠 소재</td></tr>
+            <tr><td class="fn">category</td><td class="ft">string</td><td class="fd"><span class="pill gray">음식</span> <span class="pill gray">장소</span> <span class="pill gray">서비스</span> <span class="pill gray">분위기</span> <span class="pill red">미분류</span></td></tr>
+            <tr><td class="fn">isOpportunity</td><td class="ft">boolean</td><td class="fd">기회 키워드 여부. 검색량 ≥1,000 이고 순위 10위 밖</td></tr>
+            <tr><td class="fn">score</td><td class="ft">float</td><td class="fd">NLP 분석 최종 점수 (0~1)</td></tr>
+          </tbody>
+        </table>
+
+        <div class="json-block"><pre>{
+  <span class="key">"requestId"</span>: <span class="str">"req-20250601-abc123"</span>,
+  <span class="key">"status"</span>: <span class="str">"success"</span>,
+  <span class="key">"recommendedKeywords"</span>: [
+    {
+      <span class="key">"keyword"</span>: <span class="str">"삼성 생선회"</span>,
+      <span class="key">"monthlySearchVolume"</span>: <span class="num">3200</span>,
+      <span class="key">"rankNo"</span>: <span class="num">4</span>,
+      <span class="key">"competitionLevel"</span>: <span class="str">"중간"</span>,
+      <span class="key">"keywordPurpose"</span>: <span class="str">"search"</span>,
+      <span class="key">"category"</span>: <span class="str">"음식"</span>,
+      <span class="key">"isOpportunity"</span>: <span class="bool">false</span>,
+      <span class="key">"score"</span>: <span class="num">0.8821</span>
+    },
+    {
+      <span class="key">"keyword"</span>: <span class="str">"생선회 맛집"</span>,
+      <span class="key">"monthlySearchVolume"</span>: <span class="num">8900</span>,
+      <span class="key">"rankNo"</span>: <span class="null">null</span>,
+      <span class="key">"competitionLevel"</span>: <span class="str">"중간"</span>,
+      <span class="key">"keywordPurpose"</span>: <span class="str">"search"</span>,
+      <span class="key">"category"</span>: <span class="str">"음식"</span>,
+      <span class="key">"isOpportunity"</span>: <span class="bool">true</span>,
+      <span class="key">"score"</span>: <span class="num">0.7134</span>
+    }
+  ],
+  <span class="key">"errorMessage"</span>: <span class="null">null</span>
+}</pre></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ⑩ 프론트 응답 -->
+  <div class="section-title">⑩ 프론트엔드 최종 응답 (Java → Front)</div>
+  <div class="card">
+    <h3>GET /v1/openapi/place/recommend 응답</h3>
+    <table class="field-table">
+      <thead><tr><th>필드</th><th>타입</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td class="fn">naverPlaceId</td><td class="ft">string</td><td class="fd">네이버 플레이스 매장 ID</td></tr>
+        <tr><td class="fn">placeName</td><td class="ft">string</td><td class="fd">매장명</td></tr>
+        <tr><td class="fn">keywords</td><td class="ft">array</td><td class="fd">추천 키워드 목록. ⑦ recommendedKeywords와 동일 구조 (Java DB 저장 후 반환)</td></tr>
+      </tbody>
+    </table>
+    <div class="json-block"><pre>{
+  <span class="key">"naverPlaceId"</span>: <span class="str">"863"</span>,
+  <span class="key">"placeName"</span>: <span class="str">"삼성회포차"</span>,
+  <span class="key">"keywords"</span>: [
+    {
+      <span class="key">"keyword"</span>: <span class="str">"삼성 생선회"</span>,
+      <span class="key">"monthlySearchVolume"</span>: <span class="num">3200</span>,
+      <span class="key">"rankNo"</span>: <span class="num">4</span>,
+      <span class="key">"competitionLevel"</span>: <span class="str">"중간"</span>
+    }
+  ]
+}</pre></div>
+  </div>
+
+
+  <!-- Python 측 구현 필요 사항 -->
+  <div class="section-title">Python 측 구현 필요 사항</div>
+  <div class="card">
+    <h3>현재 상태 vs 필요 변경</h3>
+    <table class="field-table">
+      <thead><tr><th>항목</th><th>현재</th><th>필요 변경</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="fd" style="font-weight:600;">실행 방식</td>
+          <td class="fd"><code>python main.py</code> 직접 실행</td>
+          <td class="fd">Redis <code>brpop</code> 대기 루프 Worker로 변경</td>
+        </tr>
+        <tr>
+          <td class="fd" style="font-weight:600;">입력 데이터</td>
+          <td class="fd">DB에서 직접 조회 (<code>place_id</code> 하드코딩)</td>
+          <td class="fd">Redis 페이로드에서 <code>placeDetail</code>, <code>rankSearch</code> 수신</td>
+        </tr>
+        <tr>
+          <td class="fd" style="font-weight:600;">결과 출력</td>
+          <td class="fd">콘솔 출력 + 로컬 DB upsert만</td>
+          <td class="fd">로컬 DB upsert 후 결과를 Redis <code>lpush</code>로 전송 추가</td>
+        </tr>
+        <tr>
+          <td class="fd" style="font-weight:600;">필드명 컨벤션</td>
+          <td class="fd">snake_case (<code>monthly_search_volume</code>)</td>
+          <td class="fd">결과 전송 시 camelCase 변환 필요 (<code>monthlySearchVolume</code>)</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note-box" style="margin-top:14px;">
+      <strong>참고:</strong> Python Worker 구현 시 <code>redis_worker.py</code> 별도 파일로 분리 권장. <code>main.py</code>의 <code>run(place_id)</code> 함수를 그대로 호출하고, Worker는 Redis I/O만 담당하는 구조로 최소 변경 가능.
+    </div>
+  </div>
+
+</div>
+<footer>Nplaceup NLP Pipeline · Backend Handoff Schema · 2025</footer>
+</body>
+</html>

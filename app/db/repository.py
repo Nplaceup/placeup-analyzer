@@ -292,6 +292,67 @@ def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
         return mapping
 
 
+def get_related_keywords_for_place(
+    place_id:     int,
+    city:         str,
+    neighborhood: str,
+    top_n:        int = 10,
+) -> list[dict]:
+    """
+    해당 매장의 rankings 키워드에 매핑된 연관검색어(keyword_related) 조회.
+    위치(city/neighborhood 포함) + 검색량(> 0) 기준으로 필터링.
+
+    Parameters
+    ----------
+    place_id     : 매장 ID
+    city         : 구 단위 지역명 (예: "강남")  — LIKE 매칭
+    neighborhood : 동 단위 지역명 (예: "역삼")  — LIKE 매칭
+    top_n        : 검색량 내림차순 상위 N개 (기본값 10)
+
+    Returns
+    -------
+    list[dict]
+        [{"keyword": str, "monthly_search_volume": int, "competitive_level": str}, ...]
+    """
+    if not place_id or (not city and not neighborhood):
+        return []
+
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT DISTINCT ON (kr.name)
+                       kr.name                  AS keyword,
+                       kr.monthly_search_volume,
+                       kr.competition_level
+                FROM   keyword_related kr
+                JOIN   rankings r ON r.keyword_id = kr.keywords_id
+                WHERE  r.place_id = :place_id
+                  AND  kr.monthly_search_volume > 0
+                  AND  (
+                       kr.name LIKE :city_pattern
+                    OR kr.name LIKE :neighborhood_pattern
+                  )
+                ORDER  BY kr.name, kr.monthly_search_volume DESC
+            """),
+            {
+                "place_id":             place_id,
+                "city_pattern":         f"%{city}%",
+                "neighborhood_pattern": f"%{neighborhood}%",
+            }
+        )
+        rows = [
+            {
+                "keyword":               row.keyword,
+                "monthly_search_volume": row.monthly_search_volume,
+                "competitive_level": row.competition_level or "낮음",
+            }
+            for row in result
+        ]
+
+    # 검색량 내림차순 top_n 반환
+    return sorted(rows, key=lambda x: -x["monthly_search_volume"])[:top_n]
+
+
 def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     """
     키워드 월간 검색량 조회 (keyword_search_volumes 테이블)
@@ -335,7 +396,6 @@ def create_recommend_keywords_table() -> None:
     sentiment_score        : 감성 지표 점수 (정규화 0~1, Phase 2 연동 전 기본 1.0)
     recency_score          : 최신성 지표 점수 (0~1)
     consistency_score      : 일관성 지표 점수 (0~1)
-    is_ngram               : bigram 여부 (공백 포함 = True)
     is_induced             : 유도어 결합 여부
     keyword_purpose        : 'search' | 'marketing'
     category               : '음식' | '장소' | '서비스' | '분위기' | '미분류'
@@ -361,7 +421,6 @@ def create_recommend_keywords_table() -> None:
                 sentiment_score        FLOAT         NOT NULL DEFAULT 1.0,
                 recency_score          FLOAT         NOT NULL DEFAULT 0.0,
                 consistency_score      FLOAT         NOT NULL DEFAULT 0.0,
-                is_ngram               BOOLEAN       NOT NULL DEFAULT FALSE,
                 is_induced             BOOLEAN       NOT NULL DEFAULT FALSE,
                 keyword_purpose        VARCHAR(20)   NOT NULL DEFAULT 'marketing',
                 category               VARCHAR(20)   NOT NULL DEFAULT '미분류',
@@ -376,9 +435,7 @@ def create_recommend_keywords_table() -> None:
                 UNIQUE (place_id, keyword)
             )
         """))
-        # ── 기존 테이블에 STAGE 2.5 신규 컬럼 추가 (이미 있으면 무시) ────────────
-        # CREATE TABLE IF NOT EXISTS는 기존 테이블의 스키마를 변경하지 않으므로
-        # ALTER TABLE로 별도 처리
+        # ── 신규 컬럼 추가 (이미 있으면 무시) ────────────────────────────────────
         new_columns = [
             ("case_type",             "CHAR(1)     NOT NULL DEFAULT 'C'"),
             ("rank_no",               "INT"),
@@ -394,6 +451,12 @@ def create_recommend_keywords_table() -> None:
                 f"ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
             ))
 
+        # ── 폐기 컬럼 제거 (이미 없으면 무시) ────────────────────────────────────
+        # is_ngram: keyword에서 재계산 가능한 파생 필드 → 제거
+        session.execute(text(
+            "ALTER TABLE recommend_keywords DROP COLUMN IF EXISTS is_ngram"
+        ))
+
         session.commit()
         print("[DB] recommend_keywords 테이블 확인/생성 완료")
 
@@ -406,7 +469,7 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
     ──────────
     place_id    : 매장 ID
     formatted   : attach_inducement() + keyword_meta 주입 후 반환값
-                  [{"keyword", "base_score", "is_ngram", "is_induced",
+                  [{"keyword", "base_score", "is_induced",
                     "keyword_purpose", "category",
                     "case_type", "rank_no", "rank_no_change",
                     "monthly_search_volume", "mention_count",
@@ -442,7 +505,6 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
             "sentiment_score":        breakdown.get("sentiment",   1.0),
             "recency_score":          breakdown.get("recency",     0.0),
             "consistency_score":      breakdown.get("consistency", 0.0),
-            "is_ngram":               item["is_ngram"],
             "is_induced":             item["is_induced"],
             "keyword_purpose":        item["keyword_purpose"],
             "category":               item["category"],
@@ -462,7 +524,7 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
                 INSERT INTO recommend_keywords
                     (place_id, keyword, score,
                      tfidf_score, sentiment_score, recency_score, consistency_score,
-                     is_ngram, is_induced, keyword_purpose, category,
+                     is_induced, keyword_purpose, category,
                      case_type, rank_no, rank_no_change,
                      monthly_search_volume, mention_count,
                      competition_level, is_opportunity,
@@ -470,7 +532,7 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
                 VALUES
                     (:place_id, :keyword, :score,
                      :tfidf_score, :sentiment_score, :recency_score, :consistency_score,
-                     :is_ngram, :is_induced, :keyword_purpose, :category,
+                     :is_induced, :keyword_purpose, :category,
                      :case_type, :rank_no, :rank_no_change,
                      :monthly_search_volume, :mention_count,
                      :competition_level, :is_opportunity,
@@ -482,7 +544,6 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
                     sentiment_score        = EXCLUDED.sentiment_score,
                     recency_score          = EXCLUDED.recency_score,
                     consistency_score      = EXCLUDED.consistency_score,
-                    is_ngram               = EXCLUDED.is_ngram,
                     is_induced             = EXCLUDED.is_induced,
                     keyword_purpose        = EXCLUDED.keyword_purpose,
                     category               = EXCLUDED.category,
@@ -511,7 +572,7 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
     """
     저장된 추천 키워드 조회 (score 내림차순)
     반환: [{"keyword", "score", "keyword_purpose", "category",
-            "is_ngram", "is_induced",
+            "is_induced",
             "case_type", "rank_no", "rank_no_change",
             "monthly_search_volume", "mention_count",
             "competition_level", "is_opportunity",
@@ -522,7 +583,7 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
             text("""
                 SELECT keyword, score, tfidf_score, sentiment_score,
                        recency_score, consistency_score,
-                       is_ngram, is_induced, keyword_purpose, category,
+                       is_induced, keyword_purpose, category,
                        case_type, rank_no, rank_no_change,
                        monthly_search_volume, mention_count,
                        competition_level, is_opportunity,

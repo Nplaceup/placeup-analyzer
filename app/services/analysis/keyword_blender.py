@@ -7,8 +7,8 @@
 # ─ 점수 합산 규칙 ────────────────────────────────────────────────────────────
 # 1. 각 모듈 점수를 모듈 내 최대값으로 0~1 정규화
 # 2. 정규화 점수 × 모듈 가중치 = 기여 점수
-# 3. 동일 키워드가 복수 모듈에서 등장하면 기여 점수 합산 (source="multi")
-# 4. 합산 점수 내림차순 정렬 → 상위 BLEND_TOP_N개 반환
+# 3. 동일 키워드가 복수 모듈에서 등장하면 최고 기여 점수 유지 (source="multi")
+# 4. 최고 점수 내림차순 정렬 → 상위 BLEND_TOP_N개 반환
 #
 # ─ 파이프라인 위치 ───────────────────────────────────────────────────────────
 # 모듈1 / (모듈2) / 모듈3 → [keyword_blender] → STAGE 4 (attach_inducement)
@@ -92,9 +92,10 @@ def blend_keywords(
                 # 첫 등장: 원본 메타데이터 그대로 복사
                 merged[kw] = {**item, "score": weighted_score}
             else:
-                # 중복 등장: 점수 합산, source 갱신
-                merged[kw]["score"] += weighted_score
-                if merged[kw]["source"] != item.get("source"):
+                # 중복 등장: 최고 점수 유지, 메타데이터는 높은 쪽 기준
+                if weighted_score > merged[kw]["score"]:
+                    merged[kw] = {**item, "score": weighted_score, "source": "multi"}
+                else:
                     merged[kw]["source"] = "multi"
                 # monthly_search_volume은 더 큰 값 유지
                 prev_vol = merged[kw].get("monthly_search_volume", 0)
