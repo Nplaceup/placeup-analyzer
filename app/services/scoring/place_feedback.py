@@ -1,3 +1,5 @@
+from app.services.nlp.sentiment import SentimentAnalyzer
+
 class PlaceFeedback:
     """
     플레이스 운영 개선 피드백 생성기
@@ -78,9 +80,18 @@ class PlaceFeedback:
         if total < 10:
             feedbacks.append("리뷰가 부족해요. 리뷰 이벤트나 방문 고객에게 리뷰 작성을 유도해보세요.")
 
+        # 감성 분석으로 부정 리뷰만 필터링
+        sentiment_analyzer = SentimentAnalyzer()
+        negative_reviews = [
+            r for r in reviews
+            if sentiment_analyzer.analyze_review(r["content"]) < 0
+        ]
+
         def keyword_ratio(keywords: list[str]) -> float:
+            if not negative_reviews:
+                return 0.0
             count = sum(
-                1 for r in reviews
+                1 for r in negative_reviews
                 if any(kw in r["content"] for kw in keywords)
             )
             return count / total
