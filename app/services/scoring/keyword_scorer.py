@@ -66,7 +66,7 @@ class keywordScorer:
         tfidf:        dict,
         per_review:   dict,
         review_dates: Optional[dict] = None,  # {review_id: datetime}
-        sentiment:    Optional[dict] = None,  # {keyword: float}  ← Phase 2 연동
+        sentiment:    Optional[dict] = None,  # {keyword: float (-1~1)}  ← SentimentAnalyzer 연동
     ) -> list:
         """
         최종 키워드 점수 산출.
@@ -76,7 +76,8 @@ class keywordScorer:
         tfidf        : {keyword: tfidf_score}  — STAGE 2 merged_tfidf
         per_review   : {review_id: Counter}    — STAGE 2 merged_per_review
         review_dates : {review_id: datetime}   — 최신성 계산용
-        sentiment    : {keyword: float (-1~1)} — 감성 점수 (None이면 중립 1.0 적용)
+        sentiment    : {keyword: float (-1~1)} — SentimentAnalyzer.analyze() ÷ 2 정규화값
+                       None이면 중립 1.0 적용
 
         Returns
         -------

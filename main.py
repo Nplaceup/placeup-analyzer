@@ -6,6 +6,7 @@ from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAG
 from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
 from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
 from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result  # STAGE 2.5 (외부 키워드 결합)
+from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.7 (감성 분석)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
 from app.output.keyword_formatter import attach_inducement                 # STAGE 4  (카테고리 태깅 + 유도어 결합)
 
@@ -256,6 +257,26 @@ def run(place_id: int, round_no: int = 1):
         _sep("STAGE 2.5 · 외부 키워드 결합")
         summarize_merge_result(keyword_meta, merged_tfidf)
 
+        # ── STAGE 2.7 ─────────────────────────────────────────────────────
+        # 감성 분석: 키워드별 리뷰 감성 점수 집계
+        # SentimentAnalyzer.analyze() → -2~2, scorer 입력 범위 -1~1 로 정규화
+        # ─────────────────────────────────────────────────────────────────
+        sentiment_analyzer = SentimentAnalyzer()
+        raw_sentiment      = sentiment_analyzer.analyze(reviews, merged_per_review)
+        sentiment_scores   = {kw: score / 2 for kw, score in raw_sentiment.items()}
+
+        _sep("STAGE 2.7 · 감성 분석")
+        matched = sum(1 for v in sentiment_scores.values() if v != 0.0)
+        print(f"  감성 매칭 키워드 : {matched}개 / 전체 {len(sentiment_scores)}개")
+        pos = sum(1 for v in sentiment_scores.values() if v > 0)
+        neg = sum(1 for v in sentiment_scores.values() if v < 0)
+        print(f"  긍정 {pos}개 / 부정 {neg}개 / 중립 {len(sentiment_scores) - pos - neg}개")
+        print(f"\n  {'키워드':<18} {'감성(-1~1)':>10}")
+        print(f"  {'-'*30}")
+        for kw, sc in sorted(sentiment_scores.items(), key=lambda x: -abs(x[1]))[:15]:
+            bar = "+" * int(sc * 5) if sc > 0 else "-" * int(abs(sc) * 5)
+            print(f"  {kw:<18} {sc:>+8.4f}  {bar}")
+
         # ── STAGE 3 ───────────────────────────────────────────────────────
         # 스코어링
         # ─────────────────────────────────────────────────────────────────
@@ -264,7 +285,7 @@ def run(place_id: int, round_no: int = 1):
             tfidf        = merged_tfidf,
             per_review   = merged_per_review,
             review_dates = review_dates,
-            sentiment    = None   # 감성 사전 완성 후 연결
+            sentiment    = sentiment_scores,
         )
 
         _sep("STAGE 3 · 스코어링")
