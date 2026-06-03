@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local DB 스키마 명세서 — recommend_keywords</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      background: #f5f6fa;
+      color: #1e2230;
+      padding: 40px 24px 80px;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; }
+
+    /* 헤더 */
+    .doc-header {
+      background: #1e2230;
+      color: #fff;
+      border-radius: 12px;
+      padding: 32px 36px;
+      margin-bottom: 32px;
+    }
+    .doc-header .badge {
+      display: inline-block;
+      background: #4f6ef7;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+    .doc-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .doc-header p  { font-size: 14px; color: #a0aabf; line-height: 1.6; }
+
+    /* 메타 정보 */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 32px;
+    }
+    .meta-card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 18px 20px;
+      border: 1px solid #e4e8f0;
+    }
+    .meta-card .label { font-size: 11px; color: #8892a4; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .meta-card .value { font-size: 14px; font-weight: 600; color: #1e2230; }
+    .meta-card .value code { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 13px; background: #f0f2f8; padding: 2px 6px; border-radius: 4px; }
+
+    /* 섹션 타이틀 */
+    .section-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1e2230;
+      margin: 32px 0 14px;
+      padding-left: 12px;
+      border-left: 3px solid #4f6ef7;
+    }
+
+    /* 테이블 */
+    .schema-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid #e4e8f0;
+      font-size: 13.5px;
+      margin-bottom: 8px;
+    }
+    .schema-table thead tr {
+      background: #f0f2f8;
+    }
+    .schema-table thead th {
+      text-align: left;
+      padding: 11px 14px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #5a657a;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid #e4e8f0;
+      white-space: nowrap;
+    }
+    .schema-table tbody tr { border-bottom: 1px solid #f0f2f8; transition: background .12s; }
+    .schema-table tbody tr:last-child { border-bottom: none; }
+    .schema-table tbody tr:hover { background: #fafbff; }
+    .schema-table tbody td { padding: 11px 14px; vertical-align: top; line-height: 1.5; }
+
+    .col-name  { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 13px; color: #2f54eb; font-weight: 600; white-space: nowrap; }
+    .col-type  { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 12px; color: #52596b; white-space: nowrap; }
+    .col-null  { font-size: 12px; }
+    .tag-nn    { background: #fff0f0; color: #cf1322; padding: 2px 7px; border-radius: 4px; font-size: 11.5px; font-weight: 600; }
+    .tag-null  { background: #f6ffed; color: #389e0d; padding: 2px 7px; border-radius: 4px; font-size: 11.5px; font-weight: 600; }
+    .col-default { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 12px; color: #7c8494; }
+    .col-desc  { font-size: 13px; color: #3a4155; line-height: 1.55; }
+    .pill {
+      display: inline-block;
+      background: #f0f2f8;
+      color: #3a4a6b;
+      font-size: 11.5px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      margin: 1px 2px 1px 0;
+      font-family: 'SF Mono', 'Fira Mono', monospace;
+    }
+    .pill.blue   { background: #e6edff; color: #2f54eb; }
+    .pill.green  { background: #f6ffed; color: #389e0d; }
+    .pill.orange { background: #fff7e6; color: #d46b08; }
+    .pill.red    { background: #fff0f0; color: #cf1322; }
+
+    /* PK/FK 뱃지 */
+    .badge-pk { display: inline-block; background: #fffbe6; color: #ad6800; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 4px; border: 1px solid #ffd666; }
+    .badge-fk { display: inline-block; background: #f0f5ff; color: #2f54eb; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 4px; border: 1px solid #adc6ff; }
+    .badge-uk { display: inline-block; background: #f9f0ff; color: #531dab; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 4px; border: 1px solid #d3adf7; }
+
+    /* 그룹 구분 행 */
+    .group-row td {
+      background: #f7f8fc;
+      font-size: 11px;
+      font-weight: 700;
+      color: #8892a4;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 7px 14px;
+    }
+
+    /* 인덱스 박스 */
+    .index-box {
+      background: #fff;
+      border: 1px solid #e4e8f0;
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin-bottom: 8px;
+    }
+    .index-box h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #1e2230; }
+    .index-item { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 12.5px; color: #3a4155; margin-bottom: 5px; }
+    .index-item span { color: #8892a4; margin-left: 8px; }
+
+    /* 파이프라인 흐름 */
+    .pipeline-box {
+      background: #fff;
+      border: 1px solid #e4e8f0;
+      border-radius: 10px;
+      padding: 20px 24px;
+      font-size: 13px;
+      color: #3a4155;
+      line-height: 2;
+    }
+    .pipeline-box .stage { display: inline-block; background: #e6edff; color: #2f54eb; padding: 1px 9px; border-radius: 5px; font-weight: 600; font-size: 12px; margin-right: 6px; }
+    .pipeline-box .arrow { color: #8892a4; margin: 0 4px; }
+
+    footer { margin-top: 48px; text-align: center; font-size: 12px; color: #a0aabf; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- 헤더 -->
+  <div class="doc-header">
+    <div class="badge">Schema Specification · Local DB</div>
+    <h1>recommend_keywords 테이블 명세서</h1>
+    <p>NLP 키워드 분석 파이프라인의 최종 결과를 저장하는 로컬 PostgreSQL 테이블.<br>
+    매장(place_id)별로 추천 키워드와 점수·메타데이터를 upsert 방식으로 관리한다.</p>
+  </div>
+
+  <!-- 메타 정보 -->
+  <div class="meta-grid">
+    <div class="meta-card">
+      <div class="label">테이블명</div>
+      <div class="value"><code>recommend_keywords</code></div>
+    </div>
+    <div class="meta-card">
+      <div class="label">DB</div>
+      <div class="value">Local PostgreSQL (WRITE_DB)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">기본키</div>
+      <div class="value"><code>id</code> (SERIAL)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">유니크 제약</div>
+      <div class="value"><code>(place_id, keyword)</code></div>
+    </div>
+    <div class="meta-card">
+      <div class="label">쓰기 방식</div>
+      <div class="value">ON CONFLICT DO UPDATE (upsert)</div>
+    </div>
+    <div class="meta-card">
+      <div class="label">파이프라인 위치</div>
+      <div class="value">STAGE 5 (최종 저장)</div>
+    </div>
+  </div>
+
+  <!-- 파이프라인 흐름 -->
+  <div class="section-title">데이터 생성 흐름</div>
+  <div class="pipeline-box">
+    <span class="stage">STAGE 0</span> DB 조회 (리뷰·매장정보)
+    <span class="arrow">→</span>
+    <span class="stage">모듈1</span> 기본 키워드 생성
+    <span class="arrow">→</span>
+    <span class="stage">모듈2</span> NLP (TF-IDF · CASE A/B/C · 스코어링)
+    <span class="arrow">→</span>
+    <span class="stage">모듈3</span> 경쟁업체 분석<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    <span class="arrow">→</span>
+    <span class="stage">블렌딩</span> 가중치 합산
+    <span class="arrow">→</span>
+    <span class="stage">STAGE 4</span> 유도어 결합
+    <span class="arrow">→</span>
+    <span class="stage">STAGE 5</span> recommend_keywords upsert
+  </div>
+
+  <!-- 컬럼 명세 -->
+  <div class="section-title">컬럼 명세</div>
+  <table class="schema-table">
+    <thead>
+      <tr>
+        <th>컬럼명</th>
+        <th>타입</th>
+        <th>NULL</th>
+        <th>기본값</th>
+        <th>설명</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <!-- 식별자 -->
+      <tr class="group-row"><td colspan="5">식별자</td></tr>
+      <tr>
+        <td class="col-name"><span class="badge-pk">PK</span>id</td>
+        <td class="col-type">SERIAL</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">auto</td>
+        <td class="col-desc">자동 증가 기본키</td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="badge-fk">FK</span>place_id</td>
+        <td class="col-type">INT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">—</td>
+        <td class="col-desc">매장 ID. RDS <code>place_reviews.places_id</code> 참조</td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="badge-uk">UK</span>keyword</td>
+        <td class="col-type">VARCHAR(100)</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">—</td>
+        <td class="col-desc">키워드 텍스트. 단어(unigram) 또는 복합어(bigram). 유도어 결합형 포함 (예: "파스타 맛집"). <code>(place_id, keyword)</code> 조합으로 유니크</td>
+      </tr>
+
+      <!-- 종합 점수 -->
+      <tr class="group-row"><td colspan="5">종합 점수</td></tr>
+      <tr>
+        <td class="col-name">score</td>
+        <td class="col-type">FLOAT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">—</td>
+        <td class="col-desc">블렌딩 최종 점수 (0~1). 모듈1·2·3 가중치 합산 후 정규화. 높을수록 추천 우선순위 높음</td>
+      </tr>
+
+      <!-- 지표별 점수 (STAGE 3) -->
+      <tr class="group-row"><td colspan="5">NLP 지표별 점수 (STAGE 3 · NLP 키워드만 유효, 나머지는 기본값)</td></tr>
+      <tr>
+        <td class="col-name">tfidf_score</td>
+        <td class="col-type">FLOAT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0.0</td>
+        <td class="col-desc">TF-IDF 정규화 점수 (0~1). 리뷰 내 키워드 중요도. NLP 키워드만 유효값, 기본·경쟁업체 키워드는 0.0</td>
+      </tr>
+      <tr>
+        <td class="col-name">sentiment_score</td>
+        <td class="col-type">FLOAT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">1.0</td>
+        <td class="col-desc">감성 점수 (0~1). −1~1 범위를 0~1로 정규화. 현재 감성 사전 미연동으로 전체 1.0 고정 (추후 업데이트 예정)</td>
+      </tr>
+      <tr>
+        <td class="col-name">recency_score</td>
+        <td class="col-type">FLOAT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0.0</td>
+        <td class="col-desc">최신성 점수 (0~1). 최근 리뷰에서 언급될수록 높음. 감쇠 공식: <code>1 / (1 + 경과개월 × 0.1)</code></td>
+      </tr>
+      <tr>
+        <td class="col-name">consistency_score</td>
+        <td class="col-type">FLOAT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0.0</td>
+        <td class="col-desc">일관성 점수 (0~1). 여러 리뷰어가 독립적으로 언급할수록 높음. <code>언급 리뷰 수 / 전체 리뷰 수</code></td>
+      </tr>
+
+      <!-- 키워드 분류 -->
+      <tr class="group-row"><td colspan="5">키워드 분류</td></tr>
+      <tr>
+        <td class="col-name">is_ngram</td>
+        <td class="col-type">BOOLEAN</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">FALSE</td>
+        <td class="col-desc">복합어(bigram) 여부. 공백 포함 시 TRUE (예: "파스타 맛집" → TRUE, "파스타" → FALSE)</td>
+      </tr>
+      <tr>
+        <td class="col-name">is_induced</td>
+        <td class="col-type">BOOLEAN</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">FALSE</td>
+        <td class="col-desc">유도어 결합형 여부. STAGE 4에서 유도어 사전 기반으로 결합 생성된 키워드 (예: "파스타" → "파스타 맛집")</td>
+      </tr>
+      <tr>
+        <td class="col-name">keyword_purpose</td>
+        <td class="col-type">VARCHAR(20)</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">'marketing'</td>
+        <td class="col-desc">키워드 용도.
+          <span class="pill blue">search</span> 네이버 검색 노출 최적화 대상 키워드 /
+          <span class="pill orange">marketing</span> 광고·콘텐츠 소재용 키워드
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name">category</td>
+        <td class="col-type">VARCHAR(20)</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">'미분류'</td>
+        <td class="col-desc">의미 카테고리.
+          <span class="pill">음식</span>
+          <span class="pill">장소</span>
+          <span class="pill">서비스</span>
+          <span class="pill">분위기</span>
+          <span class="pill red">미분류</span>
+        </td>
+      </tr>
+
+      <!-- 순위·검색량 메타데이터 -->
+      <tr class="group-row"><td colspan="5">순위 · 검색량 메타데이터 (STAGE 2.5 / RDS 크롤링 데이터 기반)</td></tr>
+      <tr>
+        <td class="col-name">case_type</td>
+        <td class="col-type">CHAR(1)</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">'C'</td>
+        <td class="col-desc">키워드 출처 분류.
+          <span class="pill blue">A</span> NLP 추출 ∩ 네이버 순위 데이터 동시 존재 /
+          <span class="pill orange">B</span> 순위 데이터만 존재 (리뷰 미언급) /
+          <span class="pill">C</span> NLP 추출만 존재 (순위 없음)
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name">rank_no</td>
+        <td class="col-type">INT</td>
+        <td class="col-null"><span class="tag-null">NULL 가능</span></td>
+        <td class="col-default">NULL</td>
+        <td class="col-desc">현재 네이버 플레이스 검색 순위. 1이 최상위. NULL = 해당 키워드 순위 데이터 없음 (CASE C)</td>
+      </tr>
+      <tr>
+        <td class="col-name">rank_no_change</td>
+        <td class="col-type">INT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0</td>
+        <td class="col-desc">전일 대비 순위 변동. 양수 = 상승, 음수 = 하락, 0 = 유지</td>
+      </tr>
+      <tr>
+        <td class="col-name">monthly_search_volume</td>
+        <td class="col-type">INT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0</td>
+        <td class="col-desc">월간 네이버 검색량. 0 = 검색량 데이터 없거나 미집계 키워드</td>
+      </tr>
+      <tr>
+        <td class="col-name">mention_count</td>
+        <td class="col-type">INT</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">0</td>
+        <td class="col-desc">리뷰 언급 건수 (해당 키워드가 등장한 리뷰 수). CASE B(순위only) 키워드는 0</td>
+      </tr>
+      <tr>
+        <td class="col-name">competition_level</td>
+        <td class="col-type">VARCHAR(10)</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">'낮음'</td>
+        <td class="col-desc">월간 검색량 기반 경쟁 강도.
+          <span class="pill red">높음</span> ≥ 10,000 /
+          <span class="pill orange">중간</span> ≥ 1,000 /
+          <span class="pill green">낮음</span> &lt; 1,000
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name">is_opportunity</td>
+        <td class="col-type">BOOLEAN</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">FALSE</td>
+        <td class="col-desc">기회 키워드 여부. <code>monthly_search_volume ≥ 1,000</code> AND <code>rank_no > 10 또는 NULL</code> 인 경우 TRUE. 검색 수요는 있으나 현재 노출이 부족한 키워드</td>
+      </tr>
+
+      <!-- 타임스탬프 -->
+      <tr class="group-row"><td colspan="5">타임스탬프</td></tr>
+      <tr>
+        <td class="col-name">analyzed_at</td>
+        <td class="col-type">TIMESTAMP</td>
+        <td class="col-null"><span class="tag-nn">NOT NULL</span></td>
+        <td class="col-default">NOW()</td>
+        <td class="col-desc">파이프라인 분석 실행 시각. upsert 시 매번 갱신되므로 마지막 분석 시점 추적 가능</td>
+      </tr>
+
+    </tbody>
+  </table>
+
+  <!-- 인덱스 -->
+  <div class="section-title">제약 조건 및 인덱스</div>
+  <div class="index-box">
+    <h3>제약 조건</h3>
+    <div class="index-item">PRIMARY KEY (id)</div>
+    <div class="index-item">UNIQUE (place_id, keyword) <span>— upsert 충돌 기준키. 동일 매장·키워드 조합 중복 불가</span></div>
+  </div>
+  <div class="index-box">
+    <h3>권장 인덱스 (미적용 시 쿼리 성능 저하 가능)</h3>
+    <div class="index-item">idx_rk_place_score ON recommend_keywords (place_id, score DESC) <span>— 매장별 상위 키워드 조회</span></div>
+    <div class="index-item">idx_rk_opportunity ON recommend_keywords (place_id, is_opportunity) <span>— 기회 키워드 필터</span></div>
+    <div class="index-item">idx_rk_analyzed_at ON recommend_keywords (analyzed_at DESC) <span>— 최신 분석 결과 조회</span></div>
+  </div>
+
+</div>
+<footer>Nplaceup NLP Pipeline · Local DB Schema · 2025</footer>
+</body>
+</html>
