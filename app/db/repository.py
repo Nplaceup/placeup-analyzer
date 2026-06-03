@@ -131,6 +131,9 @@ def get_place_info(place_id: int) -> dict | None:
         "category":      str,   # 업종 (예: "이탈리안", "브런치카페")
         "neighborhood":  str,   # 동 단위 — 접미사 제거 (예: "역삼동" → "역삼")
         "city":          str,   # 구/군 단위 — 접미사 제거 (예: "강남구" → "강남")
+        "description":        str,   # 소개글 (없으면 빈 문자열)
+        "menu_list":          str,   # 메뉴 목록 (없으면 빈 문자열)
+        "image_review_count": int,   # 사진 포함 리뷰 수 (없으면 0)
     }
     매장 없으면 None 반환.
 
@@ -139,7 +142,8 @@ def get_place_info(place_id: int) -> dict | None:
     with ReadSession() as session:
         result = session.execute(
             text("""
-                SELECT place_name, category, address
+                SELECT place_name, category, address, 
+                    description, menu_list, image_review_count
                 FROM places
                 WHERE id = :place_id
                 LIMIT 1
@@ -164,6 +168,9 @@ def get_place_info(place_id: int) -> dict | None:
         "category":     result.category or "",
         "neighborhood": neighborhood,   # 예: "역삼", "운서"
         "city":         city,           # 예: "강남"(강남구→강남) / "중구"(중구→유지, 2자 이하 제거 안 함)
+        "description":        result.description       or "",
+        "menu_list":          result.menu_list         or "",
+        "image_review_count": result.image_review_count or 0,
     }
 
 
@@ -529,24 +536,21 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
         return [dict(row._mapping) for row in result]
 
 def create_seo_results_table() -> None:
-    """
-    seo_results 테이블이 없으면 생성 (멱등 실행 가능)
-    """
     with WriteSession() as session:
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS seo_results (
-                id                     SERIAL PRIMARY KEY,
-                place_id               INT           NOT NULL,
-                score                  INT           NOT NULL,
-                grade                  VARCHAR(20)   NOT NULL,
-                keyword_optimization   FLOAT         NOT NULL DEFAULT 0.0,
-                review_quality         FLOAT         NOT NULL DEFAULT 0.0,
-                search_exposure        FLOAT         NOT NULL DEFAULT 0.0,
-                competition            FLOAT         NOT NULL DEFAULT 0.0,
-                summary                TEXT          NOT NULL,
-                seo_feedback           TEXT          NOT NULL DEFAULT '[]',
-                review_feedback        TEXT          NOT NULL DEFAULT '[]',
-                created_at             TIMESTAMP     NOT NULL DEFAULT NOW(),
+                id                   SERIAL PRIMARY KEY,
+                place_id             INT           NOT NULL,
+                score                INT           NOT NULL,
+                grade                VARCHAR(20)   NOT NULL,
+                place_completeness   FLOAT         NOT NULL DEFAULT 0.0,
+                review_quality       FLOAT         NOT NULL DEFAULT 0.0,
+                place_summary        TEXT          NOT NULL DEFAULT '{}',
+                summary              TEXT          NOT NULL,
+                seo_feedback         TEXT          NOT NULL DEFAULT '[]',
+                review_feedback      TEXT          NOT NULL DEFAULT '[]',
+                competitor_feedback  TEXT          NOT NULL DEFAULT '[]',
+                created_at           TIMESTAMP     NOT NULL DEFAULT NOW(),
                 UNIQUE (place_id)
             )
         """))
@@ -555,9 +559,6 @@ def create_seo_results_table() -> None:
 
 
 def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) -> None:
-    """
-    SEO Score + 피드백 결과를 seo_results 테이블에 upsert
-    """
     import json
     b = seo_result["breakdown"]
 
@@ -566,57 +567,57 @@ def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) ->
             text("""
                 INSERT INTO seo_results
                     (place_id, score, grade,
-                     keyword_optimization, review_quality,
-                     search_exposure, competition,
+                     place_completeness, review_quality,
+                     place_summary,
                      summary, seo_feedback, review_feedback,
+                     competitor_feedback,
                      created_at)
                 VALUES
                     (:place_id, :score, :grade,
-                     :keyword_optimization, :review_quality,
-                     :search_exposure, :competition,
+                     :place_completeness, :review_quality,
+                     :place_summary,
                      :summary, :seo_feedback, :review_feedback,
+                     :competitor_feedback,
                      NOW())
                 ON CONFLICT (place_id)
                 DO UPDATE SET
-                    score                  = EXCLUDED.score,
-                    grade                  = EXCLUDED.grade,
-                    keyword_optimization   = EXCLUDED.keyword_optimization,
-                    review_quality         = EXCLUDED.review_quality,
-                    search_exposure        = EXCLUDED.search_exposure,
-                    competition            = EXCLUDED.competition,
-                    summary                = EXCLUDED.summary,
-                    seo_feedback           = EXCLUDED.seo_feedback,
-                    review_feedback        = EXCLUDED.review_feedback,
-                    created_at             = NOW()
+                    score               = EXCLUDED.score,
+                    grade               = EXCLUDED.grade,
+                    place_completeness  = EXCLUDED.place_completeness,
+                    review_quality      = EXCLUDED.review_quality,
+                    place_summary       = EXCLUDED.place_summary,
+                    summary             = EXCLUDED.summary,
+                    seo_feedback        = EXCLUDED.seo_feedback,
+                    review_feedback     = EXCLUDED.review_feedback,
+                    competitor_feedback = EXCLUDED.competitor_feedback,
+                    created_at          = NOW()
             """),
             {
-                "place_id":             place_id,
-                "score":                seo_result["total"],
-                "grade":                seo_result["grade"],
-                "keyword_optimization": b["keyword_optimization"],
-                "review_quality":       b["review_quality"],
-                "search_exposure":      b["search_exposure"],
-                "competition":          b["competition"],
-                "summary":              feedback_result["summary"],
-                "seo_feedback":         json.dumps(feedback_result["seo_feedback"],    ensure_ascii=False),
-                "review_feedback":      json.dumps(feedback_result["review_feedback"], ensure_ascii=False),
+                "place_id":            place_id,
+                "score":               seo_result["total"],
+                "grade":               seo_result["grade"],
+                "place_completeness":  b["place_completeness"],
+                "review_quality":      b["review_quality"],
+                "place_summary":       json.dumps(feedback_result.get("place_summary", {}), ensure_ascii=False),
+                "summary":             feedback_result["summary"],
+                "seo_feedback":        json.dumps(feedback_result["seo_feedback"],        ensure_ascii=False),
+                "review_feedback":     json.dumps(feedback_result["review_feedback"],     ensure_ascii=False),
+                "competitor_feedback": json.dumps(feedback_result["competitor_feedback"], ensure_ascii=False),
             }
         )
         session.commit()
-    print(f"[DB] place_id={place_id} SEO 결과 upsert 완료")
+    print(f"[DB] place_id={place_id} 플레이스 관리 점수 upsert 완료")
     
 
 def get_seo_result(place_id: int) -> dict | None:
-    """
-    저장된 SEO 결과 조회
-    """
     with ReadSession() as session:
         result = session.execute(
             text("""
                 SELECT place_id, score, grade,
-                       keyword_optimization, review_quality,
-                       search_exposure, competition,
+                       place_completeness, review_quality,
+                       place_summary,
                        summary, seo_feedback, review_feedback,
+                       competitor_feedback,
                        created_at
                 FROM seo_results
                 WHERE place_id = :place_id

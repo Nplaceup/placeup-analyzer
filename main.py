@@ -28,8 +28,9 @@ from app.db.repository import (
     get_recommend_keywords,
     create_seo_results_table, upsert_seo_result,
 )
-from app.services.scoring.seo_scorer import SEOScorer
-from app.services.scoring.seo_feedback import SEOFeedback
+from app.services.scoring.place_scorer import PlaceScorer
+from app.services.scoring.place_feedback import PlaceFeedback
+from app.services.scoring.place_summary import PlaceSummary
 from app.db.repository import get_recommend_keywords
 import redis
 import json
@@ -392,35 +393,45 @@ def run(place_id: int, round_no: int = 1):
 
     if round_no == 2:
         keywords        = get_recommend_keywords(place_id)
-        seo_scorer      = SEOScorer()
-        seo_result      = seo_scorer.calc_score(keywords)
+        place_scorer    = PlaceScorer()
+        place_score_result   = place_scorer.calc_score(keywords, place_info, len(reviews))
 
-        _sep("STAGE 6 · SEO Score 산출")
-        print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
-        b = seo_result["breakdown"]
-        print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
-        print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
-        print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
-        print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+        _sep("STAGE 6 · 플레이스 관리 점수 산출")
+        print(f"  플레이스 관리 점수 : {place_score_result['total']}점  {place_score_result['grade']}")
+        b = place_score_result["breakdown"]
+        print(f"  매장 정보 완성도 : {b['place_completeness']:.1f} / 40")
+        print(f"  리뷰 품질        : {b['review_quality']:.1f} / 60")
 
-        # ── STAGE 7 · SEO 피드백 생성 ─────────────────────────────────────
-        seo_feedback_gen = SEOFeedback()
-        feedback_result  = seo_feedback_gen.generate(seo_result, reviews)
+        # ── STAGE 7 · 플레이스 운영 개선 피드백 생성 ──────────────────────
+        place_feedback_gen = PlaceFeedback()
+        feedback_result    = place_feedback_gen.generate(place_score_result, reviews, competitor_result)
 
-        _sep("STAGE 7 · SEO 피드백 생성")
+        _sep("STAGE 7 · 플레이스 운영 개선 피드백 생성")
         print(f"  총평 : {feedback_result['summary']}")
-        print(f"\n  [SEO 기반 피드백]")
+        print(f"\n  [매장 정보 완성도 기반 피드백]")
         for fb in feedback_result['seo_feedback']:
             print(f"    · {fb}")
         print(f"\n  [리뷰 기반 피드백]")
         for fb in feedback_result['review_feedback']:
             print(f"    · {fb}")
+        print(f"\n  [경쟁업체 기반 피드백]")
+        for fb in feedback_result['competitor_feedback']:
+            print(f"    · {fb}")
 
-        # ── STAGE 8 · seo_results 테이블에 직접 저장 (Python 담당) ────────
-        upsert_seo_result(place_id, seo_result, feedback_result)
+        # ── STAGE 8 · seo_results 테이블에 저장 ───────────────────────────
+        upsert_seo_result(place_id, place_score_result, feedback_result)
 
-        _sep("STAGE 8 · seo_results 저장 완료")
-        print(f"  place_id={place_id} SEO 결과 저장")
+        _sep("STAGE 8 · 플레이스 관리 점수 저장 완료")
+        print(f"  place_id={place_id} 플레이스 관리 점수 저장")
+
+        # ── STAGE 8.5 · 플레이스 분석 요약 생성 ──────────────────────────
+        place_summary_gen = PlaceSummary()
+        summary_result    = place_summary_gen.generate(keywords)
+
+        _sep("STAGE 8.5 · 플레이스 분석 요약")
+        print(summary_result["text"])
+
+        feedback_result["place_summary"] = summary_result["summary"]
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 9 · Redis 큐에 완료 알림 적재
@@ -449,19 +460,18 @@ def run(place_id: int, round_no: int = 1):
                 for item in formatted
             ],
             "seo": {
-                "total":    seo_result["total"],
-                "grade":    seo_result["grade"],
+                "total":    place_score_result["total"],
+                "grade":    place_score_result["grade"],
                 "breakdown": {
-                    "keywordOptimization": seo_result["breakdown"]["keyword_optimization"],
-                    "reviewQuality":       seo_result["breakdown"]["review_quality"],
-                    "searchExposure":      seo_result["breakdown"]["search_exposure"],
-                    "competition":         seo_result["breakdown"]["competition"],
+                    "placeCompleteness": place_score_result["breakdown"]["place_completeness"],
+                    "reviewQuality":     place_score_result["breakdown"]["review_quality"],
                 },
             },
             "feedback": {
                 "summary":        feedback_result["summary"],
                 "seoFeedback":    feedback_result["seo_feedback"],
                 "reviewFeedback": feedback_result["review_feedback"],
+                "competitorFeedback": feedback_result["competitor_feedback"],
             },
         }
 
