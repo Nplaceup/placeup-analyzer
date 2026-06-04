@@ -236,6 +236,30 @@ def get_competitor_place_ids(
         return [row.id for row in result]
 
 
+def get_competitor_names(place_ids: list[int]) -> dict[int, str]:
+    """
+    경쟁업체 place_id → 매장명 매핑 반환.
+
+    Returns
+    -------
+    {place_id: place_name, ...}
+    빈 리스트 입력 시 빈 dict 반환.
+    """
+    if not place_ids:
+        return {}
+
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT id, place_name
+                FROM   places
+                WHERE  id = ANY(:place_ids)
+            """),
+            {"place_ids": place_ids}
+        )
+        return {row.id: row.place_name for row in result}
+
+
 def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
     """
     여러 매장의 최신 키워드 + 순위 목록 조회 (경쟁업체 분석용).

@@ -18,6 +18,7 @@ from app.db.repository import (
     get_keywords_by_place_ids,    # place_id 리스트로 키워드+순위 조회
     get_place_rankings,           # place_id로 내 키워드+순위 조회
     get_keyword_monthly_search,   # 키워드 리스트로 월간 검색량 조회
+    get_competitor_names,         # place_id 리스트로 업체명 조회
 )
 from app.data.semantic_dictionary import get_semantic_tag
 from app.core.config import COMPETITOR_LIMIT, MIN_COMPETITOR_COUNT
@@ -88,7 +89,9 @@ def analyze_competitors(
                 "monthly_search_volume": int,
             }, ...
         ],
-        "advantage_keywords": [str, ...],        # 프론트 전용 — 내 독점 키워드
+        "advantage_keywords": [                  # 프론트 전용 — 내 독점 키워드
+            {"keyword": str, "monthly_search_volume": int}, ...
+        ],
         "category_gap": {                        # 프론트 전용 — 카테고리별 비교
             category: {
                 "mine":            int,
@@ -96,6 +99,7 @@ def analyze_competitors(
             }, ...
         },
         "competitor_count": int,                 # 실제 분석된 경쟁업체 수
+        "competitor_names": [str, ...],          # 프론트 전용 — 경쟁업체 이름 목록
     }
 
     경쟁업체를 찾지 못하면 모든 리스트가 빈 값인 dict 반환.
@@ -106,6 +110,7 @@ def analyze_competitors(
         "advantage_keywords":[],
         "category_gap":      {},
         "competitor_count":  0,
+        "competitor_names":  [],
     }
 
     category = place_info.get("category", "")
@@ -124,6 +129,7 @@ def analyze_competitors(
         return _empty
 
     n_competitors = len(competitor_ids)
+    name_map = get_competitor_names(competitor_ids)
 
     # ── 2. 경쟁업체 키워드+순위 수집 ─────────────────────────────────────────
     competitor_kw_map = get_keywords_by_place_ids(competitor_ids)
@@ -154,10 +160,11 @@ def analyze_competitors(
         if r["rank_no"] is not None
     }
 
-    # 검색량 조회 대상: gap + rank_gap 후보 전체
+    # 검색량 조회 대상: gap + rank_gap + advantage 후보 전체
     search_volume_targets = (
         (all_competitor_kwd - my_keywords)       # gap 후보
         | (my_keywords & all_competitor_kwd)     # rank_gap 후보
+        | (my_keywords - all_competitor_kwd)     # advantage 후보
     )
     volumes = get_keyword_monthly_search(list(search_volume_targets))
 
@@ -175,6 +182,7 @@ def analyze_competitors(
             "keyword":               kw,
             "score":                 vol_score * 0.7 + freq_score * 0.3,
             "source":                "competitor",
+            "category":              _get_category(kw),
             "competitor_count":      cnt,
             "monthly_search_volume": vol,
         })
@@ -209,6 +217,7 @@ def analyze_competitors(
             "keyword":               kw,
             "score":                 gap_score * 0.7 + vol_score * 0.3,
             "source":                "competitor",
+            "category":              _get_category(kw),
             "my_rank_no":            my_rank_map.get(kw),   # 원본 유지 (null = 70위 초과)
             "competitor_avg_rank":   round(comp_avg, 1),
             "rank_gap":              round(gap, 1),
@@ -221,7 +230,11 @@ def analyze_competitors(
 
     # ── 6. advantage_keywords 산출 (프론트 전용) ─────────────────────────────
     # 내 키워드에는 있고 경쟁업체 전체에 없는 것
-    advantage_keywords = sorted(my_keywords - all_competitor_kwd)
+    advantage_set = my_keywords - all_competitor_kwd
+    advantage_keywords = [
+        {"keyword": kw, "monthly_search_volume": volumes.get(kw, 0)}
+        for kw in sorted(advantage_set)
+    ]
 
     # ── 7. category_gap 산출 (프론트 전용) ───────────────────────────────────
     # 경쟁업체 키워드 카테고리 분포 vs 내 키워드 카테고리 분포 비교
@@ -258,4 +271,5 @@ def analyze_competitors(
         "advantage_keywords":advantage_keywords,
         "category_gap":      category_gap,
         "competitor_count":  n_competitors,
+        "competitor_names":  list(name_map.values()),
     }
