@@ -119,7 +119,7 @@ class PlaceFeedback:
 
         # 독점 키워드 강점 피드백
         if advantage_keywords:
-            top3 = ", ".join(advantage_keywords[:3])
+            top3 = ", ".join(kw["keyword"] for kw in advantage_keywords[:3])
             feedbacks.append(f"경쟁업체 대비 독점 키워드가 있어요! ({top3}) 소개글과 리뷰에 적극 활용해보세요.")
 
         # 카테고리 갭 피드백

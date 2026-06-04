@@ -348,6 +348,31 @@ def run(place_id: int, round_no: int = 1):
             print(f"    {cat:<6}  내={v['mine']}  경쟁업체평균={v['competitor_avg']}")
 
     # ══════════════════════════════════════════════════════════════════════
+    # Round 1 early return — 블렌딩/스코어링/DB upsert 불필요
+    # 세 모듈 키워드를 중복 없이 수집해 Spring에 전달 (크롤링 대상 목록)
+    # ══════════════════════════════════════════════════════════════════════
+    if round_no == 1:
+        seen: set[str] = set()
+        kw_list: list[str] = []
+        for kw in (
+            [item["keyword"] for item in base_kws]
+            + [item["keyword"] for item in nlp_keywords]
+            + [item["keyword"] for item in competitor_result.get("gap_keywords", [])]
+            + [item["keyword"] for item in competitor_result.get("rank_gap_keywords", [])]
+        ):
+            if kw not in seen:
+                kw_list.append(kw)
+                seen.add(kw)
+
+        r.lpush("analysis:result:queue", json.dumps({
+            "place_id": place_id,
+            "round":    1,
+            "keywords": kw_list,
+        }, ensure_ascii=False))
+        print(f"\n[Redis] Round 1 키워드 목록 전달 완료 — place_id={place_id}, {len(kw_list)}개")
+        return
+
+    # ══════════════════════════════════════════════════════════════════════
     # 블렌딩 · 모듈1 + 모듈2 + 모듈3 가중치 합산
     # ══════════════════════════════════════════════════════════════════════
     blended = blend_keywords(
@@ -457,52 +482,44 @@ def run(place_id: int, round_no: int = 1):
         feedback_result["place_summary"] = summary_result["summary"]
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 9 · Redis 큐에 완료 알림 적재
+    # STAGE 9 · Redis 큐에 완료 알림 적재 (Round 2 전용)
+    # Round 1은 모듈3 완료 직후 early return으로 이미 처리됨
     # ══════════════════════════════════════════════════════════════════════
-    if round_no == 1:
-        # 1차: 키워드 문자열 목록만 전달 (Spring이 RankSearch 후 2차 요청)
-        result_data = {
-            "place_id": place_id,
-            "round":    1,
-            "keywords": [item["keyword"] for item in formatted]
-        }
-    else:
-        # 2차: 키워드 + 순위/검색량 전체 데이터 전달
-        result_data = {
-            "place_id": place_id,
-            "round":    2,
-            "keywords": [
-                {
-                    "keyword":             item["keyword"],
-                    "score":               item["base_score"],
-                    "monthlySearchVolume": item.get("monthly_search_volume", 0),
-                    "rankNo":              item.get("rank_no"),
-                    "competitionLevel":    item.get("competition_level", "낮음"),
-                    "isOpportunity":       item.get("is_opportunity", False),
-                }
-                for item in formatted
-            ],
-            "seo": {
-                "total":    place_score_result["total"],
-                "grade":    place_score_result["grade"],
-                "breakdown": {
-                    "placeCompleteness": place_score_result["breakdown"]["place_completeness"],
-                    "reviewQuality":     place_score_result["breakdown"]["review_quality"],
-                },
+    result_data = {
+        "place_id": place_id,
+        "round":    2,
+        "keywords": [
+            {
+                "keyword":             item["keyword"],
+                "score":               item["base_score"],
+                "monthlySearchVolume": item.get("monthly_search_volume", 0),
+                "rankNo":              item.get("rank_no"),
+                "competitionLevel":    item.get("competition_level", "낮음"),
+                "isOpportunity":       item.get("is_opportunity", False),
+            }
+            for item in formatted
+        ],
+        "seo": {
+            "total":    place_score_result["total"],
+            "grade":    place_score_result["grade"],
+            "breakdown": {
+                "placeCompleteness": place_score_result["breakdown"]["place_completeness"],
+                "reviewQuality":     place_score_result["breakdown"]["review_quality"],
             },
-            "feedback": {
-                "summary":        feedback_result["summary"],
-                "seoFeedback":    feedback_result["seo_feedback"],
-                "reviewFeedback": feedback_result["review_feedback"],
-                "competitorFeedback": feedback_result["competitor_feedback"],
-            },
-        }
+        },
+        "feedback": {
+            "summary":           feedback_result["summary"],
+            "seoFeedback":       feedback_result["seo_feedback"],
+            "reviewFeedback":    feedback_result["review_feedback"],
+            "competitorFeedback":feedback_result["competitor_feedback"],
+        },
+    }
 
     r.lpush(
         "analysis:result:queue",
         json.dumps(result_data, ensure_ascii=False)
     )
-    print(f"\n[Redis] 결과 적재 완료 place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
+    print(f"\n[Redis] Round 2 결과 적재 완료 — place_id={place_id}, 키워드={len(formatted)}개")
 
 
 def listen_queue():
