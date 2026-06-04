@@ -170,14 +170,16 @@ def analyze_competitors(
 
     # ── 4. gap_keywords 산출 ─────────────────────────────────────────────────
     # 조건: MIN_COMPETITOR_COUNT개 이상 경쟁업체 등장 + 내 키워드에 없음
+    gap_candidates = all_competitor_kwd - my_keywords
+    gap_max_vol    = max((volumes.get(kw, 0) for kw in gap_candidates), default=1) or 1
+
     gap_raw = []
     for kw, cnt in kw_freq.items():
         if kw in my_keywords or cnt < MIN_COMPETITOR_COUNT:
             continue
         vol        = volumes.get(kw, 0)
-        max_vol    = max(volumes.values(), default=1) or 1
         freq_score = cnt / n_competitors
-        vol_score  = vol / max_vol
+        vol_score  = vol / gap_max_vol
         gap_raw.append({
             "keyword":               kw,
             "score":                 vol_score * 0.7 + freq_score * 0.3,
@@ -196,9 +198,15 @@ def analyze_competitors(
     #       (숫자가 작을수록 높은 순위 — 1위가 최상위)
     # null 처리: 크롤러가 70위까지만 추적하므로 null = RANK_UNTRACKED(71)로 처리
     #            "경쟁업체 5위, 나는 70위 초과"인 경우를 rank_gap에 포함
+    rank_gap_candidates  = my_keywords & all_competitor_kwd
+    rank_gap_max_vol     = max((volumes.get(kw, 0) for kw in rank_gap_candidates), default=1) or 1
+
     rank_gap_raw = []
-    for kw in my_keywords & all_competitor_kwd:
-        my_rank = my_rank_map.get(kw, RANK_UNTRACKED)   # null → 71위로 처리
+    for kw in rank_gap_candidates:
+        # my_rank_no: 실제 크롤링 순위 (None = 70위 초과)
+        # my_rank: gap 계산용 — null을 RANK_UNTRACKED(71)로 대체
+        my_rank_no = my_rank_map.get(kw)
+        my_rank    = my_rank_no if my_rank_no is not None else RANK_UNTRACKED
         comp_ranks = kw_ranks.get(kw, [])
         if not comp_ranks:
             continue
@@ -210,17 +218,16 @@ def analyze_competitors(
 
         # 점수: 순위 격차 70% + 검색량 30%
         vol       = volumes.get(kw, 0)
-        max_vol   = max(volumes.values(), default=1) or 1
         gap_score = min(gap / 50, 1.0)        # 최대 50위 차이를 1.0으로 정규화
-        vol_score = vol / max_vol
+        vol_score = vol / rank_gap_max_vol
         rank_gap_raw.append({
             "keyword":               kw,
             "score":                 gap_score * 0.7 + vol_score * 0.3,
             "source":                "competitor",
             "category":              _get_category(kw),
-            "my_rank_no":            my_rank_map.get(kw),   # 원본 유지 (null = 70위 초과)
+            "my_rank_no":            my_rank_no,             # None = 70위 초과
             "competitor_avg_rank":   round(comp_avg, 1),
-            "rank_gap":              round(gap, 1),
+            "rank_gap":              round(gap, 1),          # RANK_UNTRACKED 기반
             "monthly_search_volume": vol,
         })
 

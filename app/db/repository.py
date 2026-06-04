@@ -759,10 +759,10 @@ def upsert_competitor_analysis(place_id: int, competitor_result: dict) -> None:
                      advantage_keywords, category_gap,
                      analyzed_at)
                 VALUES
-                    (:place_id, :competitor_count, :competitor_names::jsonb,
-                     :gap_keywords::jsonb, :rank_gap_keywords::jsonb,
-                     :advantage_keywords::jsonb, :category_gap::jsonb,
-                     NOW())
+                    (:place_id, :competitor_count, CAST(:competitor_names AS jsonb),
+                    CAST(:gap_keywords AS jsonb),CAST(:rank_gap_keywords AS jsonb),
+                    CAST(:advantage_keywords AS jsonb),CAST(:category_gap AS jsonb),
+                    NOW())
                 ON CONFLICT (place_id)
                 DO UPDATE SET
                     competitor_count   = EXCLUDED.competitor_count,

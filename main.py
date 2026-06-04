@@ -335,7 +335,7 @@ def run(place_id: int, round_no: int = 1):
     competitor_result = (
         analyze_competitors(place_id, place_info, my_keywords)
         if place_info else
-        {"gap_keywords": [], "rank_gap_keywords": [], "advantage_keywords": [], "category_gap": {}, "competitor_count": 0}
+        {"gap_keywords": [], "rank_gap_keywords": [], "advantage_keywords": [], "category_gap": {}, "competitor_count": 0, "competitor_names": []}
     )
 
     _sep("모듈3 · 경쟁업체 분석")
@@ -503,6 +503,44 @@ def run(place_id: int, round_no: int = 1):
             }
             for item in formatted
         ],
+        "competitor": {
+            "count": competitor_result.get("competitor_count", 0),
+            "names": competitor_result.get("competitor_names", []),
+            "gapKeywords": [
+                {
+                    "keyword":             kw["keyword"],
+                    "category":            kw.get("category", "미분류"),
+                    "monthlySearchVolume": kw.get("monthly_search_volume", 0),
+                    "competitorCount":     kw.get("competitor_count", 0),
+                }
+                for kw in competitor_result.get("gap_keywords", [])
+            ],
+            "rankGapKeywords": [
+                {
+                    "keyword":             kw["keyword"],
+                    "category":            kw.get("category", "미분류"),
+                    "monthlySearchVolume": kw.get("monthly_search_volume", 0),
+                    "myRankNo":            kw.get("my_rank_no"),
+                    "competitorAvgRank":   kw.get("competitor_avg_rank"),
+                    "rankGap":             kw.get("rank_gap"),
+                }
+                for kw in competitor_result.get("rank_gap_keywords", [])
+            ],
+            "advantageKeywords": [
+                {
+                    "keyword":             kw["keyword"],
+                    "monthlySearchVolume": kw.get("monthly_search_volume", 0),
+                }
+                for kw in competitor_result.get("advantage_keywords", [])
+            ],
+            "categoryGap": {
+                cat: {
+                    "mine":          v["mine"],
+                    "competitorAvg": v["competitor_avg"],
+                }
+                for cat, v in competitor_result.get("category_gap", {}).items()
+            },
+        },
         "seo": {
             "total":    place_score_result["total"],
             "grade":    place_score_result["grade"],

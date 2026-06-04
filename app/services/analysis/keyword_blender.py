@@ -93,13 +93,13 @@ def blend_keywords(
                 merged[kw] = {**item, "score": weighted_score}
             else:
                 # 중복 등장: 최고 점수 유지, 메타데이터는 높은 쪽 기준
+                prev_vol = merged[kw].get("monthly_search_volume", 0)
+                curr_vol = item.get("monthly_search_volume", 0)
                 if weighted_score > merged[kw]["score"]:
                     merged[kw] = {**item, "score": weighted_score, "source": "multi"}
                 else:
                     merged[kw]["source"] = "multi"
-                # monthly_search_volume은 더 큰 값 유지
-                prev_vol = merged[kw].get("monthly_search_volume", 0)
-                curr_vol = item.get("monthly_search_volume", 0)
+                # monthly_search_volume은 더 큰 값 유지 (교체 여부와 무관하게 적용)
                 if curr_vol > prev_vol:
                     merged[kw]["monthly_search_volume"] = curr_vol
 
