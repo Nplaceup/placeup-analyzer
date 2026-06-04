@@ -26,12 +26,13 @@ from app.data.blocklist import KEYWORD_BLOCKLIST                           # STA
 from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
+    get_recommend_keywords,
+    create_competitor_analysis_table, upsert_competitor_analysis,
     upsert_seo_result,
 )
 from app.services.scoring.place_scorer import PlaceScorer
 from app.services.scoring.place_feedback import PlaceFeedback
 from app.services.scoring.place_summary import PlaceSummary
-from app.db.repository import get_recommend_keywords
 import redis
 import json
 import time
@@ -431,6 +432,9 @@ def run(place_id: int, round_no: int = 1):
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
     print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
+    upsert_competitor_analysis(place_id, competitor_result)
+    print(f"[완료] place_id={place_id} 경쟁업체 분석 결과 DB 저장")
+
 
 
     # ══════════════════════════════════════════════════════════════════════
@@ -552,4 +556,5 @@ def listen_queue():
 
 if __name__ == "__main__":
     create_recommend_keywords_table()
+    create_competitor_analysis_table()
     listen_queue()

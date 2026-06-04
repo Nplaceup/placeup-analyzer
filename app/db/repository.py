@@ -715,3 +715,73 @@ def get_seo_result(place_id: int) -> dict | None:
             return None
 
         return dict(result._mapping)
+
+
+# ── 경쟁업체 분석 결과 ──────────────────────────────────────────────────────────
+
+def create_competitor_analysis_table() -> None:
+    with WriteSession() as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS competitor_analysis (
+                id                 SERIAL    PRIMARY KEY,
+                place_id           INT       NOT NULL,
+                competitor_count   INT       NOT NULL DEFAULT 0,
+                competitor_names   JSONB     NOT NULL DEFAULT '[]',
+                gap_keywords       JSONB     NOT NULL DEFAULT '[]',
+                rank_gap_keywords  JSONB     NOT NULL DEFAULT '[]',
+                advantage_keywords JSONB     NOT NULL DEFAULT '[]',
+                category_gap       JSONB     NOT NULL DEFAULT '{}',
+                analyzed_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (place_id)
+            )
+        """))
+        session.commit()
+    print("[DB] competitor_analysis 테이블 확인/생성 완료")
+
+
+def upsert_competitor_analysis(place_id: int, competitor_result: dict) -> None:
+    """
+    analyze_competitors() 반환값을 competitor_analysis 테이블에 upsert.
+
+    Parameters
+    ----------
+    place_id           : 매장 ID
+    competitor_result  : analyze_competitors() 반환 dict
+    """
+    import json
+
+    with WriteSession() as session:
+        session.execute(
+            text("""
+                INSERT INTO competitor_analysis
+                    (place_id, competitor_count, competitor_names,
+                     gap_keywords, rank_gap_keywords,
+                     advantage_keywords, category_gap,
+                     analyzed_at)
+                VALUES
+                    (:place_id, :competitor_count, :competitor_names::jsonb,
+                     :gap_keywords::jsonb, :rank_gap_keywords::jsonb,
+                     :advantage_keywords::jsonb, :category_gap::jsonb,
+                     NOW())
+                ON CONFLICT (place_id)
+                DO UPDATE SET
+                    competitor_count   = EXCLUDED.competitor_count,
+                    competitor_names   = EXCLUDED.competitor_names,
+                    gap_keywords       = EXCLUDED.gap_keywords,
+                    rank_gap_keywords  = EXCLUDED.rank_gap_keywords,
+                    advantage_keywords = EXCLUDED.advantage_keywords,
+                    category_gap       = EXCLUDED.category_gap,
+                    analyzed_at        = NOW()
+            """),
+            {
+                "place_id":          place_id,
+                "competitor_count":  competitor_result.get("competitor_count", 0),
+                "competitor_names":  json.dumps(competitor_result.get("competitor_names",  []), ensure_ascii=False),
+                "gap_keywords":      json.dumps(competitor_result.get("gap_keywords",      []), ensure_ascii=False),
+                "rank_gap_keywords": json.dumps(competitor_result.get("rank_gap_keywords", []), ensure_ascii=False),
+                "advantage_keywords":json.dumps(competitor_result.get("advantage_keywords",[]), ensure_ascii=False),
+                "category_gap":      json.dumps(competitor_result.get("category_gap",      {}), ensure_ascii=False),
+            }
+        )
+        session.commit()
+    print(f"[DB] place_id={place_id} 경쟁업체 분석 결과 upsert 완료")
