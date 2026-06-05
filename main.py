@@ -470,13 +470,9 @@ def run(place_id: int, round_no: int = 1):
         for fb in feedback_result['competitor_feedback']:
             print(f"    · {fb}")
 
-        # ── STAGE 8 · seo_results 테이블에 저장 ───────────────────────────
-        upsert_seo_result(place_id, place_score_result, feedback_result)
-
-        _sep("STAGE 8 · 플레이스 관리 점수 저장 완료")
-        print(f"  place_id={place_id} 플레이스 관리 점수 저장")
-
         # ── STAGE 8.5 · 플레이스 분석 요약 생성 ──────────────────────────
+        # place_summary를 먼저 생성한 뒤 feedback_result에 추가해야
+        # upsert_seo_result() 저장 시 place_summary가 포함됨
         place_summary_gen = PlaceSummary()
         summary_result    = place_summary_gen.generate(keywords)
 
@@ -484,6 +480,12 @@ def run(place_id: int, round_no: int = 1):
         print(summary_result["text"])
 
         feedback_result["place_summary"] = summary_result["summary"]
+
+        # ── STAGE 8 · seo_results 테이블에 저장 ───────────────────────────
+        upsert_seo_result(place_id, place_score_result, feedback_result)
+
+        _sep("STAGE 8 · 플레이스 관리 점수 저장 완료")
+        print(f"  place_id={place_id} 플레이스 관리 점수 저장")
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 9 · Redis 큐에 완료 알림 적재 (Round 2 전용)
