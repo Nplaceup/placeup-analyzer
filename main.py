@@ -1,12 +1,12 @@
+import math
 from collections import Counter
 
 # ── 파이프라인 모듈 ─────────────────────────────────────────────────────────
 from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
-from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
-from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
-from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
-from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS  # STAGE 2.5 (외부 키워드 결합)
-from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.7 (감성 분석)
+from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (Kiwi 형태소 분석) + STAGE 1b (TF-IDF)
+from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (블랙리스트 필터 + 표현 통일)
+from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS  # STAGE 2  (외부 키워드 결합)
+from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.5 (감성 분석)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
 from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 
@@ -106,9 +106,10 @@ def run(place_id: int, round_no: int = 1):
     # 모듈2 · NLP 파이프라인 (cold_start는 리뷰 부족으로 스킵)
     # STAGE 1 → 1a → 1b → 2 → 2.5 → 3
     # ══════════════════════════════════════════════════════════════════════
-    nlp_keywords: list[dict] = []
-    keyword_meta: dict       = {}
-    scored:       list[dict] = []
+    nlp_keywords:  list[dict] = []
+    marketing_kws: list[dict] = []
+    keyword_meta:  dict       = {}
+    scored:        list[dict] = []
 
     if user_type == "cold_start":
         _sep("모듈2 · NLP 스킵 (cold_start — 리뷰 부족)")
@@ -308,7 +309,13 @@ def run(place_id: int, round_no: int = 1):
         # 메뉴 키워드(purpose=search)  → 원본 + 유도어 결합형 모두 블렌더 투입
         # 나머지       (purpose=marketing) → 원본만 블렌더 투입
         # ─────────────────────────────────────────────────────────────────
-        expanded     = expand_nlp_keywords(scored, use_similarity=True, keyword_meta=keyword_meta)
+        expanded = expand_nlp_keywords(scored, use_similarity=True, keyword_meta=keyword_meta)
+
+        # 이용방식(혼밥/혼술)은 메뉴가 아닌 다이닝 스타일 → 고유 메뉴보다 낮은 우선순위
+        for item in expanded:
+            if item.get("property") == "이용방식":
+                item["score"] = round(item["score"] * 0.5, 4)
+
         nlp_keywords = [
             {**item, "source": "nlp"}
             for item in expanded
@@ -327,6 +334,11 @@ def run(place_id: int, round_no: int = 1):
             print(f"\n  [유도어 결합형 샘플]")
             for it in induced_kws[:8]:
                 print(f"    {it['keyword']:<28}  {it['category']}/{it['property']}")
+        marketing_non_trivial = [it for it in marketing_kws if not it.get("is_induced") and it.get("category","미분류") != "미분류"]
+        if marketing_non_trivial:
+            print(f"\n  [마케팅 키워드] ({len(marketing_non_trivial)}개 → Redis 전달)")
+            for it in sorted(marketing_non_trivial, key=lambda x: -x["score"]):
+                print(f"    {it['keyword']:<15} {it['category']:<8}/{it.get('property',''):<15}  score={it['score']:.4f}")
 
     # ══════════════════════════════════════════════════════════════════════
     # 모듈3 · 경쟁업체 분석
@@ -453,6 +465,16 @@ def run(place_id: int, round_no: int = 1):
                 filled_count += 1
         print(f"\n  [검색량 후조회] 대상={len(zero_vol_kws)}개, 채워진 키워드={filled_count}개")
 
+    # 검색량 가중 최종 정렬
+    # base_score(60%) + vol_normalized(40%) 조합으로 재정렬
+    # 검색량 0인 NLP 키워드가 고검색량 랭킹 키워드보다 상위에 오지 않도록 보정
+    _LOG_MAX_VOL = math.log(200_000 + 1)
+    for item in formatted:
+        vol = item.get("monthly_search_volume") or 0
+        vol_norm = math.log(vol + 1) / _LOG_MAX_VOL
+        item["base_score"] = round(item["base_score"] * 0.6 + vol_norm * 0.4, 4)
+    formatted.sort(key=lambda x: -x["base_score"])
+
     _sep("STAGE 4 · 의미 태깅 + 포맷팅")
     print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개")
     print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  induced")
@@ -541,8 +563,21 @@ def run(place_id: int, round_no: int = 1):
                     "rankNo":              item.get("rank_no"),
                     "competitionLevel":    item.get("competition_level", "낮음"),
                     "isOpportunity":       item.get("is_opportunity", False),
+                    "keywordPurpose":      item.get("keyword_purpose", "search"),
+                    "isInduced":           item.get("is_induced", False),
                 }
                 for item in formatted
+            ],
+            "marketingKeywords": [
+                {
+                    "keyword":  item["keyword"],
+                    "category": item.get("category", ""),
+                    "property": item.get("property", ""),
+                    "score":    item["score"],
+                }
+                for item in marketing_kws
+                if not item.get("is_induced", False)
+                and item.get("category", "미분류") != "미분류"
             ],
             "seo": {
                 "total":    place_score_result["total"],
