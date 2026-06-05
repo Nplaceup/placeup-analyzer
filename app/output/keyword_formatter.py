@@ -78,25 +78,30 @@ def _assign_purpose(category: str, prop: str) -> str:
 def expand_nlp_keywords(
     scored: list[dict],
     use_similarity: bool = False,
+    keyword_meta: dict | None = None,
 ) -> list[dict]:
     """
     STAGE 3 scorer 결과를 받아 의미 태깅 + 메뉴 키워드 검색형 유도어 확장.
     블렌더 투입 전에 호출 (모듈2 내부 전용).
 
-    - 메뉴 키워드 (purpose=search) : 원본 + 유도어 결합형 모두 반환
-    - 나머지           (purpose=marketing) : 원본만 반환
+    유도어 결합 조건 (OR):
+      - semantic_dictionary 직접 매칭 (사전 등록 확실한 메뉴명)
+      - mention_count >= 2 (2명 이상 리뷰어가 독립적으로 언급)
+    위 조건 미충족 시 원본 키워드만 반환 (증폭 차단).
 
     Parameters
     ----------
     scored        : keywordScorer._calc_score() 반환값
     use_similarity: 미등록 키워드 SemanticMapper fallback 여부
+    keyword_meta  : merge_keywords() 반환값 — mention_count 조회용
 
     Returns
     -------
     list[dict]  — 원본 scored 필드 + keyword_purpose / category / property /
                   mapping_type / is_induced 추가
     """
-    result = []
+    result       = []
+    keyword_meta = keyword_meta or {}
 
     for item in scored:
         kw = item["keyword"]
@@ -118,8 +123,13 @@ def expand_nlp_keywords(
         result.append({**base, "keyword": kw})
 
         if purpose == "search":
-            for word in get_inducements(category, prop):
-                result.append({**base, "keyword": f"{kw} {word}", "is_induced": True})
+            is_dict_match  = tagged["mapping_type"] == "dictionary"
+            mention_count  = keyword_meta.get(kw, {}).get("mention_count", 0)
+            should_induce  = is_dict_match or mention_count >= 2
+
+            if should_induce:
+                for word in get_inducements(category, prop):
+                    result.append({**base, "keyword": f"{kw} {word}", "is_induced": True})
 
     return result
 

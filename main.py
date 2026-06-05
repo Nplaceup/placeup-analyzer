@@ -308,7 +308,7 @@ def run(place_id: int, round_no: int = 1):
         # 메뉴 키워드(purpose=search)  → 원본 + 유도어 결합형 모두 블렌더 투입
         # 나머지       (purpose=marketing) → 원본만 블렌더 투입
         # ─────────────────────────────────────────────────────────────────
-        expanded     = expand_nlp_keywords(scored, use_similarity=True)
+        expanded     = expand_nlp_keywords(scored, use_similarity=True, keyword_meta=keyword_meta)
         nlp_keywords = [
             {**item, "source": "nlp"}
             for item in expanded
