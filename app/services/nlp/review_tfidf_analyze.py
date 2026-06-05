@@ -52,7 +52,6 @@ class ReviewTfidfAnalyzer:
     def extract_per_review(self, reviews: list) -> dict[int, Counter]:
         """
         리뷰 목록 → {review_id: Counter}.
-        ngram.py · keyword_scorer 등과 공유하는 기본 입력 형식.
 
         reviews 원소: dict({"id": int, "content": str, ...})
                      또는 ORM 객체(.id, .content 속성)

@@ -17,7 +17,7 @@ from app.services.analysis.competitor_analyzer import analyze_competitors       
 from app.services.analysis.keyword_blender import blend_keywords
 
 # ── 파이프라인 제어 플래그 ───────────────────────────────────────────────────
-from app.core.config import USE_BIGRAM, CASE_B_GUARANTEED_TOP_N
+from app.core.config import CASE_B_GUARANTEED_TOP_N
 
 # ── 데이터 필터 ─────────────────────────────────────────────────────────────
 from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
@@ -175,93 +175,21 @@ def run(place_id: int, round_no: int = 1):
             print(f"  {kw:<18} {score:>8.5f}")
 
         # ── STAGE 2 ───────────────────────────────────────────────────────
-        # N-gram PMI 필터링  (USE_BIGRAM=False 이면 전체 스킵)
-        # ─────────────────────────────────────────────────────────────────
-        if USE_BIGRAM:
-            ngram_extractor    = NgramExtractor(analyzer)
-            bigrams_per_review = ngram_extractor.extract_bigrams_per_review(reviews)
-
-            unigram_counts: Counter = Counter()
-            for counter in per_review.values():
-                unigram_counts.update(counter)
-
-            filtered_bigrams = ngram_extractor.compute_pmi(
-                bigrams_per_review,
-                unigram_counts,
-                min_count=2,
-                df_min=3,
-                pmi_threshold=2.0,
-            )
-
-            if filtered_bigrams:
-                max_pmi     = max(filtered_bigrams.values())
-                max_tfidf_v = max(tfidf.values()) if tfidf else 1.0
-                normalized_bigrams = {
-                    bg: round((pmi / max_pmi) * max_tfidf_v, 6)
-                    for bg, pmi in filtered_bigrams.items()
-                }
-            else:
-                normalized_bigrams = {}
-
-            merged_tfidf: dict = {**tfidf, **normalized_bigrams}
-
-            valid_bigrams = set(filtered_bigrams.keys())
-            merged_per_review: dict[int, Counter] = {}
-            for review_id, counter in per_review_clean.items():
-                merged = Counter(counter)
-                merged.update({
-                    bg: cnt
-                    for bg, cnt in bigrams_per_review.get(review_id, {}).items()
-                    if bg in valid_bigrams
-                })
-                merged_per_review[review_id] = merged
-
-            _sep("STAGE 2 · N-gram PMI")
-            all_bigrams_raw: Counter = Counter()
-            for c in bigrams_per_review.values():
-                all_bigrams_raw.update(c)
-            cnt_min  = sum(1 for v in all_bigrams_raw.values() if v >= 2)
-            bigram_df_debug: Counter = Counter()
-            for c in bigrams_per_review.values():
-                for bg in c:
-                    bigram_df_debug[bg] += 1
-            cnt_df   = sum(1 for bg, v in all_bigrams_raw.items()
-                           if v >= 2 and bigram_df_debug[bg] >= 2)
-            print(f"  전체 bigram 후보        : {len(all_bigrams_raw):>4}개")
-            print(f"  min_count≥2 통과        : {cnt_min:>4}개")
-            print(f"  + df_min≥2 통과         : {cnt_df:>4}개  (단일 리뷰 반복 제거 후)")
-            print(f"  + PMI>1.0 최종 통과     : {len(filtered_bigrams):>4}개")
-            if filtered_bigrams:
-                print(f"\n  {'bigram':<22} {'PMI':>6}  df  →  {'정규화 TF-IDF':>12}")
-                print(f"  {'-'*52}")
-                for bg, pmi in sorted(filtered_bigrams.items(), key=lambda x: -x[1])[:15]:
-                    df_val = bigram_df_debug[bg]
-                    print(f"  {bg:<22} {pmi:>6.4f}  {df_val:>2}  →  {normalized_bigrams[bg]:>12.6f}")
-            else:
-                print("  ※ PMI 통과 bigram 없음")
-
-        else:
-            # USE_BIGRAM = False → bigram 없이 TF-IDF 단어만 STAGE 2.5로 전달
-            merged_tfidf: dict               = dict(tfidf)
-            merged_per_review: dict[int, Counter] = per_review_clean
-
-            _sep("STAGE 2 · N-gram PMI [SKIPPED]")
-            print(f"  USE_BIGRAM=False — 슬라이딩 윈도우 오염 문제로 bigram 스킵")
-            print(f"  STAGE 2.5 입력: TF-IDF 단어 {len(merged_tfidf)}개")
-
-        # ── STAGE 2.5 ─────────────────────────────────────────────────────
         # 외부 키워드 결합 (RDS rankings 기반 CASE A/B/C 분류)
         # ─────────────────────────────────────────────────────────────────
+        merged_tfidf: dict               = dict(tfidf)
+        merged_per_review: dict[int, Counter] = per_review_clean
+
         merged_tfidf, merged_per_review, keyword_meta = merge_keywords(
             place_id       = place_id,
             nlp_tfidf      = merged_tfidf,
             nlp_per_review = merged_per_review,
         )
 
-        _sep("STAGE 2.5 · 외부 키워드 결합")
+        _sep("STAGE 2 · 외부 키워드 결합")
         summarize_merge_result(keyword_meta, merged_tfidf)
 
-        # ── STAGE 2.7 ─────────────────────────────────────────────────────
+        # ── STAGE 2.5 ─────────────────────────────────────────────────────
         # 감성 분석: 키워드별 리뷰 감성 점수 집계
         # SentimentAnalyzer.analyze() → -2~2, scorer 입력 범위 -1~1 로 정규화
         # ─────────────────────────────────────────────────────────────────
@@ -269,7 +197,7 @@ def run(place_id: int, round_no: int = 1):
         raw_sentiment      = sentiment_analyzer.analyze(reviews, merged_per_review)
         sentiment_scores   = {kw: score / 2 for kw, score in raw_sentiment.items()}
 
-        _sep("STAGE 2.7 · 감성 분석")
+        _sep("STAGE 2.5 · 감성 분석")
         matched = sum(1 for v in sentiment_scores.values() if v != 0.0)
         print(f"  감성 매칭 키워드 : {matched}개 / 전체 {len(sentiment_scores)}개")
         pos = sum(1 for v in sentiment_scores.values() if v > 0)

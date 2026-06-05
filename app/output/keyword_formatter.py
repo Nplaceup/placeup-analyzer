@@ -9,7 +9,6 @@
 #     - attach_inducement()   : 블렌딩 결과 포맷팅 전용 (유도어 재추가 없음)
 #       NLP 항목(keyword_purpose 있음) → base_score 보완만
 #       base / competitor 항목         → 의미 태깅 + 포맷
-#     - is_ngram 제거 (keyword에서 항상 재계산 가능한 파생 필드)
 #
 # ─ 파이프라인 위치 ────────────────────────────────────────────────────────────
 # STAGE 3 → expand_nlp_keywords [STAGE 3.5] → blender → attach_inducement [STAGE 4]

@@ -461,12 +461,6 @@ def create_recommend_keywords_table() -> None:
                 f"ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
             ))
 
-        # ── 폐기 컬럼 제거 (이미 없으면 무시) ────────────────────────────────────
-        # is_ngram: keyword에서 재계산 가능한 파생 필드 → 제거
-        session.execute(text(
-            "ALTER TABLE recommend_keywords DROP COLUMN IF EXISTS is_ngram"
-        ))
-
         session.commit()
         print("[DB] recommend_keywords 테이블 확인/생성 완료")
 
