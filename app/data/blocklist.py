@@ -1,14 +1,6 @@
-# 추천 제외 키워드 및 DB 레이블 매핑
-#
-# ─ 구조 ──────────────────────────────────────────────────────────────────────
-# 1. KEYWORD_BLOCKLIST : TF-IDF 전(STAGE 1a)에 적용, 추천 키워드에서 제외
-# 2. THEMES_CATEGORY_MAP : review_analysis THEMES label → category 변환
-#    (build_category_dict 등 DB 연동 시 사용)
+# KEYWORD_BLOCKLIST    : STAGE 1a에서 적용, 범용 상위 개념어 제거 (검색·마케팅 가치 없음)
+# THEMES_CATEGORY_MAP  : review_analysis THEMES label → semantic_dictionary category 변환
 
-
-# ── 1. 키워드 블랙리스트 ──────────────────────────────────────────────────────
-# 카테고리 자체를 지칭하는 범용 상위 개념어.
-# 검색 키워드·마케팅 태그로 의미 없음 → 파이프라인 최전단에서 제거.
 KEYWORD_BLOCKLIST: set[str] = {
     # 음식 카테고리 범용어
     "음식", "메뉴", "맛", "음식량",
@@ -35,14 +27,16 @@ KEYWORD_BLOCKLIST: set[str] = {
     # 일반 명사 (의미 구분 불가)
     "느낌", "생각", "경우", "상태", "부분", "내용",
     "손님", "주인", "사장", "사람", "분",
+    # 식사 행위·식감 표현 (메뉴명·검색 키워드 가치 없음)
+    "식사", "한끼", "겉바", "겉바속촉", "자꾸", "계속",
+    # threshold 상향 후에도 음식/search로 오분류되는 SBERT 취약 단어
+    "국물", "간이", "행사", "부엌", "간식", "바로",
     # 시간 표현
     "오늘", "당일", "저번", "다음", "번", "번째",
 }
 
 
-# ── 2. THEMES label → 카테고리 매핑 ──────────────────────────────────────────
-# review_analysis 테이블의 THEMES label을 semantic_dictionary 카테고리로 분류.
-# 매핑 불가 label(만족도, 가격 등)은 None → 미분류 처리.
+# 매핑 불가 label(만족도, 가격 등)은 None → 미분류 처리
 THEMES_CATEGORY_MAP: dict[str, str | None] = {
     "맛":      "맛",
     "메뉴":    "음식",

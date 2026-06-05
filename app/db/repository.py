@@ -196,25 +196,8 @@ def get_competitor_place_ids(
     limit:            int = 10,
 ) -> list[int]:
     """
-    동일 카테고리 + 도시 내 다른 매장 ID 조회 (경쟁업체 분석용).
-    리뷰 수 내림차순으로 정렬해 실제로 잘 운영되는 업체를 우선 선택한다.
-
-    Parameters
-    ----------
-    category         : 업종 문자열 (예: "파스타", "이탈리안")
-    city             : 구 단위 도시명 (예: "강남")  — get_place_info() 반환값
-    exclude_place_id : 결과에서 제외할 내 매장 ID
-    limit            : 리뷰수 상위 N개 (config.COMPETITOR_LIMIT 기본값 10)
-
-    Returns
-    -------
-    list[int]  경쟁업체 place_id 목록 (리뷰수 내림차순, 최대 limit개)
-
-    Notes
-    -----
-    - category: LIKE 매칭 — places.category 정규화 불일치 대응
-    - address:  LIKE 매칭 — '{시도} {구군} {동}' 형식에서 구 단위 포함 여부 확인
-    - 리뷰수 정렬: 리뷰 수로 내림차순 정렬해 실제로 잘 운영되는 업체를 우선 선택
+    동일 카테고리+도시 내 매장 ID 조회 (경쟁업체 분석용).
+    category/address는 LIKE 매칭 — 정규화 불일치 대응. 리뷰수 내림차순.
     """
     with ReadSession() as session:
         result = session.execute(
@@ -245,26 +228,8 @@ def get_competitor_place_ids(
 
 def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
     """
-    여러 매장의 최신 키워드 + 순위 목록 조회 (경쟁업체 분석용).
-
-    매장별로 가장 최근 크롤링 기준 키워드를 가져온다.
-    rank_no를 포함해 반환하므로 순위역전 분석에 바로 사용 가능.
-
-    Parameters
-    ----------
-    place_ids : 조회할 매장 ID 목록
-
-    Returns
-    -------
-    dict[int, list[dict]]
-        {
-            place_id: [
-                {"keyword": str, "rank_no": int},
-                ...
-            ],
-            ...
-        }
-    빈 리스트 입력 시 빈 dict 반환.
+    여러 매장의 최신 키워드+순위 조회 (경쟁업체 분석용).
+    반환: {place_id: [{"keyword": str, "rank_no": int}, ...]}
     """
     if not place_ids:
         return {}
@@ -299,20 +264,8 @@ def get_related_keywords_for_place(
     top_n:        int = 10,
 ) -> list[dict]:
     """
-    해당 매장의 rankings 키워드에 매핑된 연관검색어(keyword_related) 조회.
-    위치(city/neighborhood 포함) + 검색량(> 0) 기준으로 필터링.
-
-    Parameters
-    ----------
-    place_id     : 매장 ID
-    city         : 구 단위 지역명 (예: "강남")  — LIKE 매칭
-    neighborhood : 동 단위 지역명 (예: "역삼")  — LIKE 매칭
-    top_n        : 검색량 내림차순 상위 N개 (기본값 10)
-
-    Returns
-    -------
-    list[dict]
-        [{"keyword": str, "monthly_search_volume": int, "competitive_level": str}, ...]
+    매장 rankings 키워드에 매핑된 연관검색어 조회.
+    위치(city/neighborhood LIKE 매칭) + 검색량>0 필터, 검색량 내림차순 top_n.
     """
     if not place_id or (not city and not neighborhood):
         return []
@@ -349,7 +302,6 @@ def get_related_keywords_for_place(
             for row in result
         ]
 
-    # 검색량 내림차순 top_n 반환
     return sorted(rows, key=lambda x: -x["monthly_search_volume"])[:top_n]
 
 
@@ -364,7 +316,6 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     if not keyword_names:
         return {}
 
-    # 공백 제거 정규화 + 원본 역매핑 (정규화된 값 → 원본)
     normalized = ["".join(kw.split()) for kw in keyword_names]
     reverse_map = {normalized[i]: keyword_names[i] for i in range(len(keyword_names))}
 
@@ -381,7 +332,6 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
             """),
             {"names": normalized}
         )
-        # DB에서 가져온 정규화 키워드를 원본 키워드로 역매핑하여 반환
         return {
             reverse_map.get(row.keyword_name, row.keyword_name): row.monthly_search_volume
             for row in result
@@ -461,41 +411,14 @@ def create_recommend_keywords_table() -> None:
                 f"ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
             ))
 
-        # ── 폐기 컬럼 제거 (이미 없으면 무시) ────────────────────────────────────
-        # is_ngram: keyword에서 재계산 가능한 파생 필드 → 제거
-        session.execute(text(
-            "ALTER TABLE recommend_keywords DROP COLUMN IF EXISTS is_ngram"
-        ))
-
         session.commit()
         print("[DB] recommend_keywords 테이블 확인/생성 완료")
 
 
 def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: dict) -> int:
     """
-    formatter 결과를 로컬 DB에 upsert.
-
-    Parameters
-    ──────────
-    place_id    : 매장 ID
-    formatted   : attach_inducement() + keyword_meta 주입 후 반환값
-                  [{"keyword", "base_score", "is_induced",
-                    "keyword_purpose", "category",
-                    "case_type", "rank_no", "rank_no_change",
-                    "monthly_search_volume", "mention_count",
-                    "competition_level", "is_opportunity"}, ...]
-    scored_map  : keyword → breakdown dict 매핑 (score breakdown 저장용)
-                  {keyword: {"tfidf": float, "sentiment": float,
-                             "recency": float, "consistency": float}}
-
-    Returns
-    ───────
-    int : upsert된 행 수
-
-    동작
-    ───────
-    - (place_id, keyword) 중복 시 모든 수치 컬럼 덮어쓰기 (ON CONFLICT DO UPDATE)
-    - analyzed_at 갱신으로 마지막 분석 시각 추적 가능
+    attach_inducement() + keyword_meta 결합 결과를 로컬 DB에 upsert.
+    (place_id, keyword) 충돌 시 전체 수치 컬럼 덮어쓰기.
     """
     if not formatted:
         return 0
@@ -503,7 +426,7 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
     rows = []
     for item in formatted:
         kw = item["keyword"]
-        # 원본 키워드의 breakdown: 유도어 결합형은 마지막 토큰 제거해 기반 키워드 복원
+        # 유도어 결합형은 마지막 토큰 제거해 기반 키워드의 breakdown 조회
         base_kw   = " ".join(kw.split()[:-1]) if item["is_induced"] else kw
         breakdown = scored_map.get(base_kw, {})
 
@@ -518,7 +441,6 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
             "is_induced":             item["is_induced"],
             "keyword_purpose":        item["keyword_purpose"],
             "category":               item["category"],
-            # STAGE 2.5 메타데이터
             "case_type":              item.get("case_type",             "C"),
             "rank_no":                item.get("rank_no"),
             "rank_no_change":         item.get("rank_no_change",        0),

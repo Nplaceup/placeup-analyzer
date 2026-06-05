@@ -59,9 +59,6 @@ BLEND_TOP_N = 30
 # 나머지 (BLEND_TOP_N - CASE_B_GUARANTEED_TOP_N)개는 기존 블렌딩 결과로 채움
 CASE_B_GUARANTEED_TOP_N = 5
 
-# ── N-gram bigram 스킵 플래그 ─────────────────────────────────────────────────
-USE_BIGRAM = False
-
 # ── 모듈1 관련 상수 ───────────────────────────────────────────────────────────
 RELATED_SCORE_CAP = 0.9
 RELATED_TOP_N = 10
