@@ -81,12 +81,16 @@ def blend_keywords(
         if not kw_list or weight == 0.0:
             continue
 
-        # 모듈 내 정규화
-        max_score = max(item["score"] for item in kw_list) or 1.0
+        # 모듈 내 정규화 (round=1 base 키워드는 score=None → 0.0으로 처리)
+        valid_scores = [item["score"] for item in kw_list if item["score"] is not None]
+        max_score = max(valid_scores) if valid_scores else 1.0
+        if max_score == 0:
+            max_score = 1.0
 
         for item in kw_list:
             kw             = item["keyword"]
-            weighted_score = round((item["score"] / max_score) * weight, 6)
+            raw_score      = item["score"] if item["score"] is not None else 0.0
+            weighted_score = round((raw_score / max_score) * weight, 6)
 
             if kw not in merged:
                 # 첫 등장: 원본 메타데이터 그대로 복사
