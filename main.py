@@ -1,26 +1,26 @@
 from collections import Counter
 
 # ── 파이프라인 모듈 ─────────────────────────────────────────────────────────
-from app.services.nlp.nlp_preprocessing import ReviewPreprocessor
-from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer
-from app.services.nlp.keyword_normalizer import KeywordNormalizer
-from app.services.nlp.ngram import NgramExtractor
-from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS
-from app.services.nlp.sentiment import SentimentAnalyzer
-from app.services.scoring.keyword_scorer import keywordScorer
-from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement
+from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
+from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
+from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
+from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
+from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS  # STAGE 2.5 (외부 키워드 결합)
+from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.7 (감성 분석)
+from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
+from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 
 # ── 분석 모듈 ───────────────────────────────────────────────────────────────
 from app.services.analysis.user_type_classifier import classify_user_type, get_module_weights
-from app.services.analysis.base_keyword_generator import generate_base_keywords
-from app.services.analysis.competitor_analyzer import analyze_competitors
+from app.services.analysis.base_keyword_generator import generate_base_keywords   # 모듈1
+from app.services.analysis.competitor_analyzer import analyze_competitors          # 모듈3
 from app.services.analysis.keyword_blender import blend_keywords
 
 # ── 파이프라인 제어 플래그 ───────────────────────────────────────────────────
-from app.core.config import USE_BIGRAM
+from app.core.config import USE_BIGRAM, CASE_B_GUARANTEED_TOP_N
 
 # ── 데이터 필터 ─────────────────────────────────────────────────────────────
-from app.data.blocklist import KEYWORD_BLOCKLIST
+from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
 
 # ── DB ─────────────────────────────────────────────────────────────────────
 from app.db.repository import (
@@ -66,7 +66,7 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     reviews      = get_reviews(place_id)
     review_dates = get_review_dates(place_id)
-    place_info   = get_place_info(place_id)
+    place_info   = get_place_info(place_id)   # 지역/업종 컨텍스트
 
     if not reviews:
         print(f"[SKIP] place_id={place_id} 리뷰 없음")
@@ -137,6 +137,7 @@ def run(place_id: int, round_no: int = 1):
         # KEYWORD_BLOCKLIST 필터 + KeywordNormalizer
         # ─────────────────────────────────────────────────────────────────
         normalizer = KeywordNormalizer()
+
         per_review_clean: dict[int, Counter] = {}
         blocklist_removed: Counter = Counter()
         for review_id, counter in per_review.items():
@@ -347,7 +348,7 @@ def run(place_id: int, round_no: int = 1):
             print(f"    {cat:<6}  내={v['mine']}  경쟁업체평균={v['competitor_avg']}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # 블렌딩
+    # 블렌딩 · 모듈1 + 모듈2 + 모듈3 가중치 합산
     # ══════════════════════════════════════════════════════════════════════
     blended = blend_keywords(
         base_keywords     = base_kws,
@@ -355,6 +356,40 @@ def run(place_id: int, round_no: int = 1):
         competitor_result = competitor_result,
         weights           = weights,
     )
+
+    # ── CASE B 순위 키워드 강제 삽입 ─────────────────────────────────────────
+    # keyword_meta에서 순위 있는 CASE B 키워드를 순위 오름차순으로 최대
+    # CASE_B_GUARANTEED_TOP_N개 선정 → 블렌딩 결과에 없으면 강제 포함
+    # 전체 개수는 BLEND_TOP_N 유지 (뒤에서부터 밀어냄)
+    if keyword_meta:
+        ranked_b_kws = sorted(
+            [
+                (kw, meta) for kw, meta in keyword_meta.items()
+                if meta["case_type"] == "B" and meta.get("rank_no") is not None
+            ],
+            key=lambda x: x[1]["rank_no"],
+        )[:CASE_B_GUARANTEED_TOP_N]
+
+        blended_kw_set = {item["keyword"] for item in blended}
+        forced_items   = []
+        for kw, meta in ranked_b_kws:
+            if kw not in blended_kw_set:
+                forced_items.append({
+                    "keyword":               kw,
+                    "score":                 0.0,   # 강제 삽입 — 점수는 최하위
+                    "source":                "ranked_b",
+                    "monthly_search_volume": meta["monthly_search_volume"],
+                })
+
+        if forced_items:
+            from app.core.config import BLEND_TOP_N
+            blended = list(blended)
+            keep    = BLEND_TOP_N - len(forced_items)
+            blended = forced_items + blended[:keep]
+            print(f"\n  [CASE B 강제 삽입] {len(forced_items)}개: "
+                  + ", ".join(f"{kw}({meta['rank_no']}위)"
+                              for kw, meta in ranked_b_kws
+                              if kw not in blended_kw_set))
 
     _sep("블렌딩 결과")
     print(f"  최종 키워드 수 : {len(blended)}개  (가중치: base={weights['base']} / nlp={weights['nlp']} / competitor={weights['competitor']})")
@@ -423,7 +458,7 @@ def run(place_id: int, round_no: int = 1):
     print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만)
+    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만 의미 있음)
     # ══════════════════════════════════════════════════════════════════════
     seo_result      = None
     feedback_result = None
