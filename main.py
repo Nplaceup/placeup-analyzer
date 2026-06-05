@@ -310,7 +310,12 @@ def run(place_id: int, round_no: int = 1):
         # 나머지       (purpose=marketing) → 원본만 블렌더 투입
         # ─────────────────────────────────────────────────────────────────
         expanded     = expand_nlp_keywords(scored, use_similarity=True)
-        nlp_keywords = [{**item, "source": "nlp"} for item in expanded]
+        # marketing 키워드(의견어/감성어)는 Naver Place 검색 쿼리가 아니므로 블렌딩 제외
+        nlp_keywords = [
+            {**item, "source": "nlp"}
+            for item in expanded
+            if item.get("keyword_purpose") != "marketing"
+        ]
 
         _sep("STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장")
         search_kws    = [it for it in expanded if it["keyword_purpose"] == "search"]
@@ -318,7 +323,7 @@ def run(place_id: int, round_no: int = 1):
         induced_kws   = [it for it in expanded if it["is_induced"]]
         print(f"  원본 scored     : {len(scored)}개")
         print(f"  확장 후 총 키워드 : {len(expanded)}개  "
-              f"(search={len(search_kws)}, marketing={len(marketing_kws)}, "
+              f"(search={len(search_kws)}, marketing 제외={len(marketing_kws)}, "
               f"induced={len(induced_kws)})")
         if induced_kws:
             print(f"\n  [유도어 결합형 샘플]")
@@ -370,7 +375,8 @@ def run(place_id: int, round_no: int = 1):
             "round":    1,
             "keywords": kw_list,
         }, ensure_ascii=False))
-        print(f"\n[Redis] Round 1 키워드 목록 전달 완료 — place_id={place_id}, {len(kw_list)}개")
+        print(f"\n[Redis] Round 1 키워드 목록 전달 완료 — place_id={place_id}, {len(kw_list)}개"
+              f"  (base={len(base_kws)}, nlp={len(nlp_keywords)}, competitor={len(competitor_result.get('gap_keywords', [])) + len(competitor_result.get('rank_gap_keywords', []))})")
         return
 
     # ══════════════════════════════════════════════════════════════════════

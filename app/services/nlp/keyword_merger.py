@@ -67,10 +67,11 @@ def merge_keywords(
     # ── 0. RDS 데이터 조회 ─────────────────────────────────────────────────
     rankings: list[dict] = get_place_rankings(place_id)
 
-    # 순위 키워드 집합 및 검색량 조회
+    # 순위 키워드 집합 및 검색량 조회 (Case A/B/C 전체 대상)
     ranked_keywords: set[str]     = {r["keyword"] for r in rankings}
     rank_map: dict[str, dict]     = {r["keyword"]: r for r in rankings}
-    search_volumes: dict[str, int] = get_keyword_monthly_search(list(ranked_keywords))
+    all_search_targets            = ranked_keywords | set(nlp_tfidf.keys())
+    search_volumes: dict[str, int] = get_keyword_monthly_search(list(all_search_targets))
 
     # ── 1. mention_count 계산 (per_review 기반) ────────────────────────────
     # 각 키워드가 몇 개 리뷰에 등장했는지
