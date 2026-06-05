@@ -1,36 +1,11 @@
 # 모듈1 · 지역+업종 기반 기본 키워드 생성
 #
-# ─ 역할 ──────────────────────────────────────────────────────────────────────
-# place_info(category, neighborhood, city)를 조합해
-# 기본 키워드 후보 목록을 생성한다.
+# cold_start 사용자(리뷰 ≤ 5개)의 핵심 데이터 소스.
+# Round 1: 검색량 없이 후보 목록만 생성 → Spring 전달
+# Round 2: Spring이 크롤링한 검색량으로 점수 계산 + BASE_SCORE_THRESHOLD 미만 탈락
+# 조합: 동/구 + term/맛집/상황어, 역/랜드마크 + term/맛집, keyword_related 연관검색어
 #
-# 리뷰 데이터 없이도 키워드를 제공할 수 있어
-# cold_start 사용자(리뷰 ≤ 5개)의 핵심 데이터 소스가 된다.
-#
-# ─ Round 구조 ────────────────────────────────────────────────────────────────
-# Round 1: 검색량 없이 후보 키워드 문자열 목록만 생성 → Spring 전달
-# Round 2: Spring이 크롤링한 검색량 데이터로 점수 계산 + 필터링
-#          - 검색량 없는 키워드 탈락
-#          - BASE_SCORE_THRESHOLD 미만 점수 탈락
-#
-# ─ 조합 규칙 ─────────────────────────────────────────────────────────────────
-# [지역 + 업종]
-#   {동} {term} / {구} {term}
-# [지역 + 맛집]
-#   {동} 맛집 / {구} 맛집 / {term} 맛집
-#   {동} {term} 맛집 / {구} {term} 맛집
-# [지역 + 상황어]
-#   {동/구} 데이트 / {동/구} 혼밥 / {동/구} 회식
-#   {동/구} {term} 데이트 / {동/구} {term} 혼밥 / {동/구} {term} 회식
-# [역 (station)]
-#   {역} {term} / {역} 맛집 / {역} 근처 맛집 / {역} 근처 {term}
-# [랜드마크 (landmark)]
-#   {랜드마크} {term} / {랜드마크} 맛집
-# [연관검색어 (keyword_related)]
-#   rankings 기반 연관검색어 중 위치 필터 + 검색량 top 10
-#
-# ─ 파이프라인 위치 ───────────────────────────────────────────────────────────
-# STAGE 0 (place_info 조회) → [모듈1] → keyword_blender
+# 파이프라인: STAGE 0(place_info) → [모듈1] → keyword_blender
 
 from app.core.config import (
     RELATED_SCORE_CAP,
@@ -48,11 +23,10 @@ from app.db.repository import (
 # 예: "고기요리" → "고기" / "돼지고기구이" → "돼지고기" / "중식당" → "중식"
 CATEGORY_STRIP_SUFFIXES = ["요리", "구이", "당"]
 
-# ── 상황어 목록 (유도어 폐기 후 보완 ──────────────────────────────────────────────
+# 지역 기반 상황별 검색어 조합용
 SITUATION_WORDS = ["데이트", "혼밥", "회식"]
 
 
-# ── 카테고리 파싱 ─────────────────────────────────────────────────────────────
 def _parse_category_terms(category: str) -> list[str]:
     """
     category 문자열을 파싱해 검색 친화적 term 목록 반환.
@@ -70,7 +44,7 @@ def _parse_category_terms(category: str) -> list[str]:
     "파스타"         → ["파스타"]
     """
     def _strip(term: str) -> str:
-        """term 끝의 불필요 접미사 제거. 결과가 빈 문자열이면 원본 반환."""
+        """접미사 제거. 결과가 빈 문자열이면 원본 반환."""
         for suffix in CATEGORY_STRIP_SUFFIXES:
             if term.endswith(suffix) and len(term) > len(suffix):
                 return term[:-len(suffix)]
@@ -79,8 +53,6 @@ def _parse_category_terms(category: str) -> list[str]:
     terms = [t.strip() for t in category.split(",") if t.strip()]
 
     if len(terms) == 1:
-        # 단일 카테고리도 접미사 strip 적용
-        # 예: "돼지고기구이" → "돼지고기" / "중식당" → "중식"
         return [_strip(terms[0])]
 
     sub_terms = terms[1:]
@@ -90,24 +62,18 @@ def _parse_category_terms(category: str) -> list[str]:
     )
 
     if has_suffix:
-        # 대분류 제거 + 접미사 strip
-        return [_strip(t) for t in sub_terms]
+        return [_strip(t) for t in sub_terms]   # 대분류 제거 + 접미사 strip
     else:
-        # 동등한 항목 → 전부 사용 (접미사 strip은 적용)
-        return [_strip(t) for t in terms]
+        return [_strip(t) for t in terms]        # 동등한 항목 → 전부 사용
 
 
-# ── 후보 키워드 조합 생성 ─────────────────────────────────────────────────────
 def _build_candidates(
     terms:        list[str],
     neighborhood: str,
     city:         str,
-    locations:    list[dict],   # LOCATION_MAP에서 조회한 역/랜드마크 목록
+    locations:    list[dict],
 ) -> list[str]:
-    """
-    term 목록 + 지역 정보를 조합해 후보 키워드 문자열 리스트 반환.
-    중복 제거 후 반환.
-    """
+    """term + 지역 정보 조합으로 후보 키워드 리스트 생성 (중복 제거)."""
     candidates: list[str] = []
     seen: set[str] = set()
 
@@ -117,27 +83,23 @@ def _build_candidates(
             seen.add(kw)
 
     for term in terms:
-        # [지역 + 업종]
         if neighborhood:
             _add(f"{neighborhood} {term}")
         if city:
             _add(f"{city} {term}")
 
-        # [지역 + 맛집]
         _add(f"{term} 맛집")
         if neighborhood:
             _add(f"{neighborhood} {term} 맛집")
         if city:
             _add(f"{city} {term} 맛집")
 
-        # [지역 + 상황어]
         for situation in SITUATION_WORDS:
             if neighborhood:
                 _add(f"{neighborhood} {term} {situation}")
             if city:
                 _add(f"{city} {term} {situation}")
 
-        # [역/랜드마크]
         for loc in locations:
             name = loc["name"]
             loc_type = loc["type"]
@@ -150,13 +112,11 @@ def _build_candidates(
                 _add(f"{name} {term}")
                 _add(f"{name} 맛집")
 
-    # [지역 + 맛집] (term 무관)
     if neighborhood:
         _add(f"{neighborhood} 맛집")
     if city:
         _add(f"{city} 맛집")
 
-    # [지역 + 상황어] (term 무관)
     for situation in SITUATION_WORDS:
         if neighborhood:
             _add(f"{neighborhood} {situation}")
@@ -166,7 +126,6 @@ def _build_candidates(
     return candidates
 
 
-# ── 메인 함수 ─────────────────────────────────────────────────────────────────
 def generate_base_keywords(
     place_info: dict,
     place_id:   int | None = None,
@@ -206,16 +165,10 @@ def generate_base_keywords(
     if not category:
         return []
 
-    # ── 1. category 파싱 ──────────────────────────────────────────────────────
-    terms = _parse_category_terms(category)
-
-    # ── 2. 역/랜드마크 조회 (구 단위) ─────────────────────────────────────────
-    locations = LOCATION_MAP.get(city_full, [])
-
-    # ── 3. 패턴 조합 후보 생성 ────────────────────────────────────────────────
+    terms      = _parse_category_terms(category)
+    locations  = LOCATION_MAP.get(city_full, [])
     candidates = _build_candidates(terms, neighborhood, city_raw, locations)
 
-    # ── 4. keyword_related 연관검색어 통합 ────────────────────────────────────
     related_keywords: list[dict] = []
     if place_id:
         related_keywords = get_related_keywords_for_place(
@@ -225,7 +178,6 @@ def generate_base_keywords(
             top_n=RELATED_TOP_N,
         )
 
-    # ── 5. Round 1: 점수 없이 후보 리스트만 반환 ──────────────────────────────
     if round_no == 1:
         result = [
             {
@@ -246,10 +198,8 @@ def generate_base_keywords(
             })
         return result
 
-    # ── 6. Round 2: 검색량 조회 + 점수 계산 + 필터링 ─────────────────────────
     volumes: dict[str, int] = get_keyword_monthly_search(candidates)
 
-    # 검색량 없는 후보 탈락
     valid = [
         (kw, volumes[kw])
         for kw in candidates
@@ -274,17 +224,13 @@ def generate_base_keywords(
             "monthly_search_volume": vol,
         })
 
-    # 연관검색어 점수 계산 (RELATED_SCORE_CAP 적용)
     related_result = _score_related(related_keywords)
 
     return sorted(base_result + related_result, key=lambda x: -x["score"])
 
 
 def _score_related(related_keywords: list[dict]) -> list[dict]:
-    """
-    keyword_related 항목에 RELATED_SCORE_CAP 기반 점수 부여.
-    검색량 정규화 후 RELATED_SCORE_CAP을 곱해 점수 상한 적용.
-    """
+    """검색량 정규화 후 RELATED_SCORE_CAP 상한을 적용해 점수 부여."""
     if not related_keywords:
         return []
 

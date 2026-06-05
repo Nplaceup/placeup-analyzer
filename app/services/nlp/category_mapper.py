@@ -1,7 +1,3 @@
-# Layer 4 전용 — semantic_mapper 이후
-# 역할: SemanticTag의 category/property 기반으로
-#       keyword_purpose 결정 (search / marketing)
-
 class CategoryMapper:
 
     PURPOSE_RULES: dict[tuple, str] = {

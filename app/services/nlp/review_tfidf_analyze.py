@@ -1,17 +1,10 @@
-# STAGE 1 (형태소 분석) + STAGE 1b (TF-IDF 계산)
+# STAGE 1 (Kiwi POS 태깅) + STAGE 1b (TF-IDF 계산)
 #
-# ─ 역할 ──────────────────────────────────────────────────────────────────────
-# ReviewPreprocessor(clean_text) 이후 단계:
-#   1. extract_keywords()   : Kiwi POS 태깅 → Counter             (STAGE 1)
-#   2. extract_per_review() : 리뷰 목록 → {review_id: Counter}
-#   3. compute_tfidf()      : per_review Counter → {keyword: tfidf_score}  (STAGE 1b)
-#
-# ─ TF-IDF 계산 방식 ─────────────────────────────────────────────────────────
-# 문서 단위: 리뷰 1개 = 1 document
-# TF(t, d)  = count(t, d) / total_tokens(d)    (리뷰 내 정규화 빈도)
-# IDF(t)    = log(N / df(t) + 1)               (역문서빈도, 스무딩)
-# TF-IDF(t) = Σ TF(t,d) × IDF(t)              (전체 리뷰 합산)
-# min_df    = 2 이상인 키워드만 TF-IDF 계산    (1회 언급 단어·형태소 오류 차단)
+# TF-IDF 계산 방식 (리뷰 1개 = 1 document):
+#   TF(t,d)   = count(t,d) / total_tokens(d)
+#   IDF(t)    = log(N / df(t) + 1)          ← +1 스무딩
+#   TF-IDF(t) = Σ TF(t,d) × IDF(t)         ← 전체 리뷰 합산
+#   min_df=2  : 1회 언급 단어·형태소 오류 차단
 
 import math
 from collections import Counter
@@ -72,44 +65,23 @@ class ReviewTfidfAnalyzer:
 
     # ── STAGE 1b: TF-IDF 계산 ───────────────────────────────────────────────
     def compute_tfidf(self, per_review: dict[int, Counter], min_df: int = 2) -> dict[str, float]:
-        """
-        per_review Counter → {keyword: tfidf_score}.
-        keyword_scorer._calc_score()의 tfidf 인자로 바로 전달 가능.
-
-        Parameters
-        ----------
-        per_review : dict[int, Counter]
-            extract_per_review() 반환값.
-            {review_id: Counter(keyword → count)}
-        min_df : int
-            최소 문서 빈도 (기본 2). df < min_df인 키워드는 TF-IDF 계산 제외.
-            1회성 형태소 분리 오류·노이즈 단어를 구조적으로 차단.
-
-        Returns
-        -------
-        dict[str, float]
-            {"파스타": 0.312, "육즙": 0.278, ...}
-        """
+        """per_review Counter → {keyword: tfidf_score}. min_df 미달 키워드 제외."""
         n_docs = len(per_review)
         if n_docs == 0:
             return {}
 
-        # 문서 빈도(df): 키워드가 등장한 리뷰 수
         df: dict[str, int] = Counter()
         for counter in per_review.values():
             for keyword in counter:
                 df[keyword] += 1
 
-        # min_df 미달 키워드 제거
         valid_kws = {kw for kw, count in df.items() if count >= min_df}
 
-        # IDF 사전 계산 (valid_kws만)
         idf: dict[str, float] = {
             kw: math.log(n_docs / (df[kw] + 1))
             for kw in valid_kws
         }
 
-        # TF-IDF 합산 (리뷰 전체 합산)
         tfidf_scores: dict[str, float] = {}
 
         for counter in per_review.values():

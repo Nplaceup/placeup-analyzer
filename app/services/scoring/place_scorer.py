@@ -93,12 +93,3 @@ class PlaceScorer:
         else:
             return "🔴 취약"
 
-    def _empty_result(self) -> dict:
-        return {
-            "total": 0,
-            "grade": "🔴 취약",
-            "breakdown": {
-                "place_completeness": 0,
-                "review_quality":     0,
-            }
-        }
