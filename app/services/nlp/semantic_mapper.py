@@ -18,7 +18,7 @@ class SemanticMapper:
     def __init__(
         self,
         model_name: str = "snunlp/KR-SBERT-V40K-klueNLI-augSTS",
-        threshold: float = 0.55
+        threshold: float = 0.65
     ):
         self.threshold = threshold
         self.model = SentenceTransformer(model_name)
