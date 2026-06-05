@@ -108,6 +108,10 @@ class PlaceFeedback:
         if keyword_ratio(["불친절", "불편", "실망"]) >= self.REVIEW_KEYWORD_THRESHOLD:
             feedbacks.append("서비스 관련 부정적 리뷰가 있어요. 서비스 품질 개선이 필요할 수 있어요.")
 
+        # 기본 메시지 (부정 키워드 없을 때)
+        if not feedbacks:
+            feedbacks.append("리뷰에서 특별한 개선 사항이 발견되지 않았어요. 현재 상태를 유지해보세요.")
+
         return feedbacks
 
     # ── ③ 경쟁업체 분석 기반 피드백 ──────────────────────────────────────
@@ -125,11 +129,17 @@ class PlaceFeedback:
         # 카테고리 갭 피드백
         for cat, v in category_gap.items():
             if v["competitor_avg"] > 0 and v["mine"] < v["competitor_avg"]:
-                gap = round(v["competitor_avg"] - v["mine"], 1)
                 feedbacks.append(
                     f"'{cat}' 관련 키워드가 경쟁업체 대비 부족해요. "
                     f"(내 매장 {v['mine']}개 vs 경쟁업체 평균 {v['competitor_avg']}개) "
                     f"관련 키워드를 보완해보세요."
                 )
+
+        # 기본 메시지 (경쟁업체 없거나 갭 없을 때)
+        if not feedbacks:
+            if competitor_result.get("competitor_count", 0) == 0:
+                feedbacks.append("아직 비교할 경쟁업체 데이터가 없어요. 더 많은 데이터가 쌓이면 경쟁 분석이 제공될 예정이에요.")
+            else:
+                feedbacks.append("경쟁업체 대비 뚜렷한 개선 사항이 없어요. 현재 키워드 전략을 유지해보세요.")
 
         return feedbacks
