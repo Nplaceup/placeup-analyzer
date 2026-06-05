@@ -14,6 +14,8 @@ class CategoryMapper:
         ("음식", "메뉴명/국찌개"):  "search",
         ("음식", "메뉴명/음료"):    "search",
         ("음식", "메뉴명/디저트"):  "search",
+        ("음식", "메뉴명/한식"):    "search",
+        ("음식", "이용방식"):       "search",
 
         # 맛
         ("맛", "일반맛"):    "marketing",
