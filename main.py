@@ -309,7 +309,11 @@ def run(place_id: int, round_no: int = 1):
         # 나머지       (purpose=marketing) → 원본만 블렌더 투입
         # ─────────────────────────────────────────────────────────────────
         expanded     = expand_nlp_keywords(scored, use_similarity=True)
-        nlp_keywords = [{**item, "source": "nlp"} for item in expanded]
+        nlp_keywords = [
+            {**item, "source": "nlp"}
+            for item in expanded
+            if item.get("keyword_purpose") != "marketing"
+        ]
 
         _sep("STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장")
         search_kws    = [it for it in expanded if it["keyword_purpose"] == "search"]
