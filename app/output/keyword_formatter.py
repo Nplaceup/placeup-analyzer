@@ -174,11 +174,19 @@ def attach_inducement(
             tagged   = _tag_semantic(kw, use_similarity=use_similarity)
             category = tagged["category"]
             prop     = tagged["property"]
+            source   = item.get("source", "")
+
+            # 순위 기반·지역+업종 기반 키워드는 검색 의도가 명확 → 항상 search
+            if source in ("ranked_b", "ranked_a", "base_related", "base_location"):
+                purpose = "search"
+            else:
+                purpose = _assign_purpose(category, prop)
+
             result.append({
                 **item,
                 "base_score":      score,
                 "is_induced":      False,
-                "keyword_purpose": _assign_purpose(category, prop),
+                "keyword_purpose": purpose,
                 "category":        category,
                 "property":        prop,
                 "mapping_type":    tagged["mapping_type"],
