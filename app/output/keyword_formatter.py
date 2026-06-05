@@ -115,11 +115,15 @@ def expand_nlp_keywords(
             "is_induced":      False,
         }
 
-        result.append({**base, "keyword": kw})
+        inducements = get_inducements(category, prop) if purpose == "search" else []
 
-        if purpose == "search":
-            for word in get_inducements(category, prop):
+        if inducements:
+            # 유도어 변형이 있으면 원본 제외 — 슬롯 낭비 방지
+            for word in inducements:
                 result.append({**base, "keyword": f"{kw} {word}", "is_induced": True})
+        else:
+            # 유도어 없는 경우(marketing 포함)만 원본 추가
+            result.append({**base, "keyword": kw})
 
     return result
 

@@ -44,9 +44,9 @@ USER_TYPE_THRESHOLDS = {
 # 임시값 — 검증 후 조정 예정
 # nlp 가중치가 0.00인 cold_start는 NLP 파이프라인 자체를 스킵
 MODULE_WEIGHTS: dict[str, dict[str, float]] = {
-    "cold_start":   {"base": 0.30, "nlp": 0.00, "competitor": 0.70},
-    "early_growth": {"base": 0.30, "nlp": 0.40, "competitor": 0.30},
-    "active":       {"base": 0.10, "nlp": 0.70, "competitor": 0.20},
+    "cold_start":   {"base": 0.50, "nlp": 0.00, "competitor": 0.50},
+    "early_growth": {"base": 0.40, "nlp": 0.25, "competitor": 0.35},
+    "active":       {"base": 0.35, "nlp": 0.40, "competitor": 0.25},
 }
 
 # ── 경쟁업체 분석 파라미터 ───────────────────────────────────────────────────
