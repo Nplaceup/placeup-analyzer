@@ -357,10 +357,16 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     """
     키워드 월간 검색량 조회 (keyword_search_volumes 테이블)
     - 동일 키워드의 가장 최신 데이터만 사용
-    반환: {keyword_name: monthly_search_volume, ...}
+    - Spring이 keyword_name을 공백 제거(replaceAll("\\s+", ""))하여 저장하므로
+      Python도 동일하게 정규화하여 조회 후 원본 키워드로 역매핑
+    반환: {keyword_name(원본): monthly_search_volume, ...}
     """
     if not keyword_names:
         return {}
+
+    # 공백 제거 정규화 + 원본 역매핑 (정규화된 값 → 원본)
+    normalized = ["".join(kw.split()) for kw in keyword_names]
+    reverse_map = {normalized[i]: keyword_names[i] for i in range(len(keyword_names))}
 
     with ReadSession() as session:
         result = session.execute(
@@ -373,9 +379,13 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
                 WHERE  k.keyword_name = ANY(:names)
                 ORDER  BY k.keyword_name, ksv.created_at DESC
             """),
-            {"names": keyword_names}
+            {"names": normalized}
         )
-        return {row.keyword_name: row.monthly_search_volume for row in result}
+        # DB에서 가져온 정규화 키워드를 원본 키워드로 역매핑하여 반환
+        return {
+            reverse_map.get(row.keyword_name, row.keyword_name): row.monthly_search_volume
+            for row in result
+        }
 
 # ───────────────────────────────────────────────
 # WRITE (Local DB - 분석 결과 적재)

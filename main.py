@@ -1,32 +1,32 @@
 from collections import Counter
 
 # ── 파이프라인 모듈 ─────────────────────────────────────────────────────────
-from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
-from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
-from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
-from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
-from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result  # STAGE 2.5 (외부 키워드 결합)
-from app.services.nlp.sentiment import SentimentAnalyzer                  # STAGE 2.7 (감성 분석)
-from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
-from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
+from app.services.nlp.nlp_preprocessing import ReviewPreprocessor
+from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer
+from app.services.nlp.keyword_normalizer import KeywordNormalizer
+from app.services.nlp.ngram import NgramExtractor
+from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS
+from app.services.nlp.sentiment import SentimentAnalyzer
+from app.services.scoring.keyword_scorer import keywordScorer
+from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement
 
 # ── 분석 모듈 ───────────────────────────────────────────────────────────────
 from app.services.analysis.user_type_classifier import classify_user_type, get_module_weights
-from app.services.analysis.base_keyword_generator import generate_base_keywords   # 모듈1
-from app.services.analysis.competitor_analyzer import analyze_competitors          # 모듈3
+from app.services.analysis.base_keyword_generator import generate_base_keywords
+from app.services.analysis.competitor_analyzer import analyze_competitors
 from app.services.analysis.keyword_blender import blend_keywords
 
 # ── 파이프라인 제어 플래그 ───────────────────────────────────────────────────
 from app.core.config import USE_BIGRAM
 
 # ── 데이터 필터 ─────────────────────────────────────────────────────────────
-from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
+from app.data.blocklist import KEYWORD_BLOCKLIST
 
 # ── DB ─────────────────────────────────────────────────────────────────────
 from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
-    upsert_seo_result,
+    upsert_seo_result, get_keyword_monthly_search,
 )
 from app.services.scoring.place_scorer import PlaceScorer
 from app.services.scoring.place_feedback import PlaceFeedback
@@ -66,7 +66,7 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     reviews      = get_reviews(place_id)
     review_dates = get_review_dates(place_id)
-    place_info   = get_place_info(place_id)   # 지역/업종 컨텍스트
+    place_info   = get_place_info(place_id)
 
     if not reviews:
         print(f"[SKIP] place_id={place_id} 리뷰 없음")
@@ -137,7 +137,6 @@ def run(place_id: int, round_no: int = 1):
         # KEYWORD_BLOCKLIST 필터 + KeywordNormalizer
         # ─────────────────────────────────────────────────────────────────
         normalizer = KeywordNormalizer()
-
         per_review_clean: dict[int, Counter] = {}
         blocklist_removed: Counter = Counter()
         for review_id, counter in per_review.items():
@@ -348,7 +347,7 @@ def run(place_id: int, round_no: int = 1):
             print(f"    {cat:<6}  내={v['mine']}  경쟁업체평균={v['competitor_avg']}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # 블렌딩 · 모듈1 + 모듈2 + 모듈3 가중치 합산
+    # 블렌딩
     # ══════════════════════════════════════════════════════════════════════
     blended = blend_keywords(
         base_keywords     = base_kws,
@@ -373,7 +372,7 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     formatted = attach_inducement(blended, top_n=len(blended), use_similarity=True)
 
-    # ── keyword_meta 결합 (NLP 키워드에만 STAGE 2.5 메타데이터 존재) ──────────
+    # ── keyword_meta 결합 ──────────────────────────────────────────────────
     for item in formatted:
         base_kw = (
             " ".join(item["keyword"].split()[:-1])
@@ -389,6 +388,23 @@ def run(place_id: int, round_no: int = 1):
         item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
 
+    # ── 검색량 후조회 ──────────────────────────────────────────────────────
+    zero_vol_kws = [item["keyword"] for item in formatted if not item.get("monthly_search_volume")]
+    if zero_vol_kws:
+        extra_volumes = get_keyword_monthly_search(zero_vol_kws)
+        filled_count = 0
+        for item in formatted:
+            if not item.get("monthly_search_volume") and item["keyword"] in extra_volumes:
+                vol = extra_volumes[item["keyword"]]
+                item["monthly_search_volume"] = vol
+                item["competition_level"]     = get_competition_level(vol)
+                item["is_opportunity"]        = (
+                    vol >= COMPETITION_THRESHOLDS["중간"]
+                    and (item.get("rank_no") is None or item["rank_no"] > 10)
+                )
+                filled_count += 1
+        print(f"\n  [검색량 후조회] 대상={len(zero_vol_kws)}개, 채워진 키워드={filled_count}개")
+
     _sep("STAGE 4 · 의미 태깅 + 포맷팅")
     print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개")
     print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  induced")
@@ -401,15 +417,13 @@ def run(place_id: int, round_no: int = 1):
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
-    # ------------- STAGE 5. 로컬 DB upsert ────────────────────────────────
+    # ── STAGE 5. 로컬 DB upsert ────────────────────────────────────────────
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
     upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
     print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
 
-
-
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만 의미 있음)
+    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만)
     # ══════════════════════════════════════════════════════════════════════
     seo_result      = None
     feedback_result = None
@@ -462,9 +476,10 @@ def run(place_id: int, round_no: int = 1):
     if round_no == 1:
         # 1차: 키워드 문자열 목록만 전달 (Spring이 RankSearch 후 2차 요청)
         result_data = {
-            "place_id": place_id,
-            "round":    1,
-            "keywords": [item["keyword"] for item in formatted]
+            "place_id":                place_id,
+            "round":                   1,
+            "keywords":                [item["keyword"] for item in formatted],
+            "base_keyword_candidates": [item["keyword"] for item in base_kws if item.get("keyword")],
         }
     else:
         # 2차: 키워드 + 순위/검색량 전체 데이터 전달
@@ -491,9 +506,9 @@ def run(place_id: int, round_no: int = 1):
                 },
             },
             "feedback": {
-                "summary":        feedback_result["summary"],
-                "seoFeedback":    feedback_result["seo_feedback"],
-                "reviewFeedback": feedback_result["review_feedback"],
+                "summary":            feedback_result["summary"],
+                "seoFeedback":        feedback_result["seo_feedback"],
+                "reviewFeedback":     feedback_result["review_feedback"],
                 "competitorFeedback": feedback_result["competitor_feedback"],
             },
         }
