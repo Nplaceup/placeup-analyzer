@@ -116,13 +116,13 @@ def run(place_id: int, round_no: int = 1):
     else:
 
     # ── STAGE 1 ───────────────────────────────────────────────────────────
-    # ReviewTfidfAnalyzer: ReviewPreprocessor.clean_text → Okt POS 태깅
+    # ReviewTfidfAnalyzer: ReviewPreprocessor.clean_text → Kiwi POS 태깅
     # 반환: {review_id: Counter(keyword → count)}
     # ─────────────────────────────────────────────────────────────────────
         analyzer   = ReviewTfidfAnalyzer()
         per_review = analyzer.extract_per_review(reviews)
 
-        _sep("STAGE 1 · 형태소 분석 (Okt POS)")
+        _sep("STAGE 1 · 형태소 분석 (Kiwi POS)")
         total_tokens_s1 = sum(sum(c.values()) for c in per_review.values())
         unique_kw_s1    = len(set(kw for c in per_review.values() for kw in c))
         print(f"  리뷰별 Counter 수  : {len(per_review)}개")

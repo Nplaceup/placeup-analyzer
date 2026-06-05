@@ -2,7 +2,7 @@
 #
 # ─ 역할 ──────────────────────────────────────────────────────────────────────
 # ReviewPreprocessor(clean_text) 이후 단계:
-#   1. extract_keywords()   : Okt POS 태깅 → Counter             (STAGE 1)
+#   1. extract_keywords()   : Kiwi POS 태깅 → Counter             (STAGE 1)
 #   2. extract_per_review() : 리뷰 목록 → {review_id: Counter}
 #   3. compute_tfidf()      : per_review Counter → {keyword: tfidf_score}  (STAGE 1b)
 #
@@ -11,10 +11,11 @@
 # TF(t, d)  = count(t, d) / total_tokens(d)    (리뷰 내 정규화 빈도)
 # IDF(t)    = log(N / df(t) + 1)               (역문서빈도, 스무딩)
 # TF-IDF(t) = Σ TF(t,d) × IDF(t)              (전체 리뷰 합산)
+# min_df    = 2 이상인 키워드만 TF-IDF 계산    (1회 언급 단어·형태소 오류 차단)
 
 import math
 from collections import Counter
-from konlpy.tag import Okt
+from kiwipiepy import Kiwi
 
 from app.services.nlp.nlp_preprocessing import ReviewPreprocessor
 
@@ -24,27 +25,27 @@ class ReviewTfidfAnalyzer:
     def __init__(self):
         self.preprocessor = ReviewPreprocessor()
         self.stopwords    = self.preprocessor.stopwords
-        self.okt          = Okt()
+        self.kiwi         = Kiwi()
 
     # ── STAGE 1: 형태소 분석 ────────────────────────────────────────────────
     def extract_keywords(self, text: str) -> Counter:
         """
-        리뷰 텍스트 1개 → 명사·형용사 Counter.
-        clean_text() 후 Okt POS 태깅, 불용어·1자 단어 제거.
+        리뷰 텍스트 1개 → 명사 Counter.
+        clean_text() 후 Kiwi POS 태깅, 불용어·1자 단어 제거.
 
         반환: Counter({"육즙": 3, "파스타": 2, ...})
         """
         if not text or not isinstance(text, str):
             return Counter()
 
-        clean      = self.preprocessor.clean_text(text)
-        pos_result = self.okt.pos(clean, stem=True)
+        clean  = self.preprocessor.clean_text(text)
+        tokens = self.kiwi.tokenize(clean)
 
         keywords = [
-            word for word, pos in pos_result
-            if pos == "Noun"
-            and word not in self.stopwords
-            and len(word) > 1
+            t.form for t in tokens
+            if t.tag.startswith("N")
+            and t.form not in self.stopwords
+            and len(t.form) > 1
         ]
         return Counter(keywords)
 
@@ -71,7 +72,7 @@ class ReviewTfidfAnalyzer:
         return per_review
 
     # ── STAGE 1b: TF-IDF 계산 ───────────────────────────────────────────────
-    def compute_tfidf(self, per_review: dict[int, Counter]) -> dict[str, float]:
+    def compute_tfidf(self, per_review: dict[int, Counter], min_df: int = 2) -> dict[str, float]:
         """
         per_review Counter → {keyword: tfidf_score}.
         keyword_scorer._calc_score()의 tfidf 인자로 바로 전달 가능.
@@ -81,6 +82,9 @@ class ReviewTfidfAnalyzer:
         per_review : dict[int, Counter]
             extract_per_review() 반환값.
             {review_id: Counter(keyword → count)}
+        min_df : int
+            최소 문서 빈도 (기본 2). df < min_df인 키워드는 TF-IDF 계산 제외.
+            1회성 형태소 분리 오류·노이즈 단어를 구조적으로 차단.
 
         Returns
         -------
@@ -97,10 +101,13 @@ class ReviewTfidfAnalyzer:
             for keyword in counter:
                 df[keyword] += 1
 
-        # IDF 사전 계산
+        # min_df 미달 키워드 제거
+        valid_kws = {kw for kw, count in df.items() if count >= min_df}
+
+        # IDF 사전 계산 (valid_kws만)
         idf: dict[str, float] = {
-            kw: math.log(n_docs / (count + 1))
-            for kw, count in df.items()
+            kw: math.log(n_docs / (df[kw] + 1))
+            for kw in valid_kws
         }
 
         # TF-IDF 합산 (리뷰 전체 합산)
@@ -112,6 +119,8 @@ class ReviewTfidfAnalyzer:
                 continue
 
             for keyword, count in counter.items():
+                if keyword not in valid_kws:
+                    continue
                 tf = count / total_tokens
                 tfidf_scores[keyword] = tfidf_scores.get(keyword, 0.0) + tf * idf[keyword]
 

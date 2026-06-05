@@ -23,14 +23,14 @@ class NgramExtractor:
 
         반환: Counter({"루프탑 뷰": 2, "파스타 맛": 1, ...})
         """
-        cleaned    = self.analyzer.preprocessor.clean_text(text)
-        pos_result = self.analyzer.okt.pos(cleaned, stem=True)
+        cleaned = self.analyzer.preprocessor.clean_text(text)
+        tokens  = self.analyzer.kiwi.tokenize(cleaned)
 
         nouns = [
-            w for w, p in pos_result
-            if p == "Noun"
-            and w not in self.analyzer.stopwords
-            and len(w) > 1
+            t.form for t in tokens
+            if t.tag.startswith("N")
+            and t.form not in self.analyzer.stopwords
+            and len(t.form) > 1
         ]
 
         bigrams = Counter()
