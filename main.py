@@ -357,11 +357,14 @@ def run(place_id: int, round_no: int = 1):
         weights           = weights,
     )
 
-    # ── CASE B 순위 키워드 강제 삽입 ─────────────────────────────────────────
-    # keyword_meta에서 순위 있는 CASE B 키워드를 순위 오름차순으로 최대
-    # CASE_B_GUARANTEED_TOP_N개 선정 → 블렌딩 결과에 없으면 강제 포함
-    # 전체 개수는 BLEND_TOP_N 유지 (뒤에서부터 밀어냄)
+# ── CASE B 순위 키워드 강제 삽입 ─────────────────────────────────────────
+    # keyword_meta에서 순위 있는 CASE B 키워드를 최대 CASE_B_GUARANTEED_TOP_N개
+    # 강제 포함. 점수는 rank_no + monthly_search_volume 조합으로 산출해
+    # 블렌딩 결과 내 적절한 위치에 삽입 (score=0 고정 방식 대신 점수 기반 정렬)
+    # 전체 개수는 BLEND_TOP_N 유지 (하위 항목부터 밀려남)
     if keyword_meta:
+        import math
+
         ranked_b_kws = sorted(
             [
                 (kw, meta) for kw, meta in keyword_meta.items()
@@ -374,22 +377,28 @@ def run(place_id: int, round_no: int = 1):
         forced_items   = []
         for kw, meta in ranked_b_kws:
             if kw not in blended_kw_set:
+                rank_no = meta["rank_no"]
+                vol     = meta["monthly_search_volume"]
+                # 점수 = (1 / rank_no) * log(vol + 1)
+                # rank_no 낮을수록(1위에 가까울수록) + 검색량 높을수록 점수 높음
+                ranked_b_score = round((1.0 / rank_no) * math.log(vol + 1), 6)
                 forced_items.append({
                     "keyword":               kw,
-                    "score":                 0.0,   # 강제 삽입 — 점수는 최하위
+                    "score":                 ranked_b_score,
                     "source":                "ranked_b",
-                    "monthly_search_volume": meta["monthly_search_volume"],
+                    "monthly_search_volume": vol,
                 })
 
         if forced_items:
             from app.core.config import BLEND_TOP_N
+            # 기존 블렌딩 결과와 합쳐서 score 기준 재정렬 후 top N 유지
             blended = list(blended)
-            keep    = BLEND_TOP_N - len(forced_items)
-            blended = forced_items + blended[:keep]
+            combined = forced_items + blended
+            combined.sort(key=lambda x: -x["score"])
+            blended = combined[:BLEND_TOP_N]
             print(f"\n  [CASE B 강제 삽입] {len(forced_items)}개: "
-                  + ", ".join(f"{kw}({meta['rank_no']}위)"
-                              for kw, meta in ranked_b_kws
-                              if kw not in blended_kw_set))
+                  + ", ".join(f"{item['keyword']}({keyword_meta[item['keyword']]['rank_no']}위, score={item['score']:.4f})"
+                              for item in forced_items))
 
     _sep("블렌딩 결과")
     print(f"  최종 키워드 수 : {len(blended)}개  (가중치: base={weights['base']} / nlp={weights['nlp']} / competitor={weights['competitor']})")
