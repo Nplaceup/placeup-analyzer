@@ -83,32 +83,20 @@ class PlaceFeedback:
         if total < 10:
             feedbacks.append("리뷰가 부족해요. 리뷰 이벤트나 방문 고객에게 리뷰 작성을 유도해보세요.")
 
-        def keyword_ratio(keywords: list[str]) -> float:
-            """
-            키워드 포함 문장만 감성 분석 → 부정(-0.3 미만)인 리뷰 비율 반환.
-            키워드가 아예 없는 리뷰는 카운트에서 제외.
-            """
-            negative_count = 0
-            for r in reviews:
-                content = r["content"]
-                if not any(kw in content for kw in keywords):
-                    continue
-                score = self._sentiment.analyze_review(content, target_keywords=keywords)
-                if score < -0.3:
-                    negative_count += 1
-            return negative_count / total
+        FEEDBACK_CATEGORIES = [
+            (["주차"],                  "주차 관련 언급이 많아요. 주차 안내 정보를 플레이스에 추가해보세요."),
+            (["웨이팅", "대기"],        "대기 관련 언급이 많아요. 웨이팅 안내 문구나 예약 시스템 도입을 고려해보세요."),
+            (["비싸", "가격", "값"],    "가격 관련 언급이 많아요. 가성비를 강조하는 키워드나 세트 메뉴 홍보를 고려해보세요."),
+            (["불친절", "불편", "실망"], "서비스 관련 부정적 리뷰가 있어요. 서비스 품질 개선이 필요할 수 있어요."),
+        ]
 
-        if keyword_ratio(["주차"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("주차 관련 언급이 많아요. 주차 안내 정보를 플레이스에 추가해보세요.")
+        ratios = self._sentiment.batch_analyze_by_keywords(
+            reviews, [kws for kws, _ in FEEDBACK_CATEGORIES]
+        )
 
-        if keyword_ratio(["웨이팅", "대기"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("대기 관련 언급이 많아요. 웨이팅 안내 문구나 예약 시스템 도입을 고려해보세요.")
-
-        if keyword_ratio(["비싸", "가격", "값"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("가격 관련 언급이 많아요. 가성비를 강조하는 키워드나 세트 메뉴 홍보를 고려해보세요.")
-
-        if keyword_ratio(["불친절", "불편", "실망"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("서비스 관련 부정적 리뷰가 있어요. 서비스 품질 개선이 필요할 수 있어요.")
+        for ratio, (_, message) in zip(ratios, FEEDBACK_CATEGORIES):
+            if ratio >= self.REVIEW_KEYWORD_THRESHOLD:
+                feedbacks.append(message)
 
         if not feedbacks:
             feedbacks.append("리뷰에서 특별한 개선 사항이 발견되지 않았어요. 현재 상태를 유지해보세요.")
