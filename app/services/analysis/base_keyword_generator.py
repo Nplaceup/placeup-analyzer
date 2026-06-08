@@ -84,44 +84,44 @@ def _build_candidates(
 
     for term in terms:
         if neighborhood:
-            _add(f"{neighborhood} {term}")
+            _add(f"{neighborhood}{term}")
         if city:
-            _add(f"{city} {term}")
+            _add(f"{city}{term}")
 
-        _add(f"{term} 맛집")
+        _add(f"{term}맛집")
         if neighborhood:
-            _add(f"{neighborhood} {term} 맛집")
+            _add(f"{neighborhood}{term}맛집")
         if city:
-            _add(f"{city} {term} 맛집")
+            _add(f"{city}{term}맛집")
 
         for situation in SITUATION_WORDS:
             if neighborhood:
-                _add(f"{neighborhood} {term} {situation}")
+                _add(f"{neighborhood}{term}{situation}")
             if city:
-                _add(f"{city} {term} {situation}")
+                _add(f"{city}{term}{situation}")
 
         for loc in locations:
             name = loc["name"]
             loc_type = loc["type"]
             if loc_type == "station":
-                _add(f"{name} {term}")
-                _add(f"{name} 맛집")
+                _add(f"{name}{term}")
+                _add(f"{name}맛집")
                 _add(f"{name} 근처 맛집")
                 _add(f"{name} 근처 {term}")
             elif loc_type == "landmark":
-                _add(f"{name} {term}")
-                _add(f"{name} 맛집")
+                _add(f"{name}{term}")
+                _add(f"{name}맛집")
 
     if neighborhood:
-        _add(f"{neighborhood} 맛집")
+        _add(f"{neighborhood}맛집")
     if city:
-        _add(f"{city} 맛집")
+        _add(f"{city}맛집")
 
     for situation in SITUATION_WORDS:
         if neighborhood:
-            _add(f"{neighborhood} {situation}")
+            _add(f"{neighborhood}{situation}")
         if city:
-            _add(f"{city} {situation}")
+            _add(f"{city}{situation}")
 
     return candidates
 

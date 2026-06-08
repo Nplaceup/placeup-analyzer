@@ -13,8 +13,7 @@ from collections import Counter
 # ── 파이프라인 모듈 (main.py와 동일) ─────────────────────────────────────────
 from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
 from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
-from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
-from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
+from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)                          # STAGE 2  (N-gram PMI)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
 from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
