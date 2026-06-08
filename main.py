@@ -173,8 +173,7 @@ def run(place_id: int, round_no: int = 1):
 
         # ── STAGE 2.5 · 감성 분석 ────────────────────────────────────────────
         sentiment_analyzer = SentimentAnalyzer()
-        raw_sentiment      = sentiment_analyzer.analyze(reviews, merged_per_review, debug=True)
-        sentiment_scores   = {kw: score / 2 for kw, score in raw_sentiment.items()}
+        sentiment_scores   = sentiment_analyzer.analyze(reviews, merged_per_review)
 
         _sep("STAGE 2.5 · 감성 분석")
         matched = sum(1 for v in sentiment_scores.values() if v != 0.0)
