@@ -198,12 +198,12 @@ def run(place_id: int, round_no: int = 1):
 
         _sep("STAGE 3 · 스코어링")
         print(f"  채점 키워드 수 : {len(scored)}개")
-        print(f"\n  {'키워드':<18} {'최종':>6}  {'TF-IDF':>7}  {'감성':>6}  {'최신성':>6}  {'일관성':>6}")
-        print(f"  {'-'*62}")
+        print(f"\n  {'키워드':<22} {'최종':>6}  {'TF-IDF':>7}  {'감성':>6}  {'최신성':>6}  {'일관성':>6}")
+        print(f"  {'-'*66}")
         for item in scored[:25]:
             b = item["breakdown"]
             print(
-                f"  {item['keyword']:<18} {item['score']:>6.4f}  "
+                f"  {item['keyword']:<22} {item['score']:>6.4f}  "
                 f"{b['tfidf']:>7.4f}  {b['sentiment']:>6.4f}  "
                 f"{b['recency']:>6.4f}  {b['consistency']:>6.4f}"
             )
@@ -376,25 +376,23 @@ def run(place_id: int, round_no: int = 1):
         )
 
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
-    upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
-    print(f"\n[완료] place_id={place_id} 키워드 {upserted}개 DB 저장")
+    upsert_recommend_keywords(place_id, formatted, scored_map)
 
     if round_no == 2:
         keywords        = get_recommend_keywords(place_id)
         place_scorer    = PlaceScorer()
         place_score_result   = place_scorer.calc_score(keywords, place_info, len(reviews))
 
-        _sep("STAGE 6 · 플레이스 관리 점수 산출")
+        _sep("STAGE 5 · 플레이스 관리 점수 산출")
         print(f"  플레이스 관리 점수 : {place_score_result['total']}점  {place_score_result['grade']}")
         b = place_score_result["breakdown"]
         print(f"  매장 정보 완성도 : {b['place_completeness']:.1f} / 40")
         print(f"  리뷰 품질        : {b['review_quality']:.1f} / 60")
 
-        # ── STAGE 7 · 플레이스 운영 개선 피드백 생성 ──────────────────────
         place_feedback_gen = PlaceFeedback()
         feedback_result    = place_feedback_gen.generate(place_score_result, reviews, competitor_result)
 
-        _sep("STAGE 7 · 플레이스 운영 개선 피드백 생성")
+        _sep("STAGE 6 · 플레이스 운영 개선 피드백 생성")
         print(f"  총평 : {feedback_result['summary']}")
         print(f"\n  [매장 정보 완성도 기반 피드백]")
         for fb in feedback_result['seo_feedback']:
@@ -410,17 +408,12 @@ def run(place_id: int, round_no: int = 1):
         summary_result    = place_summary_gen.generate(keywords)
         feedback_result["place_summary"] = summary_result["summary"]
 
-        _sep("STAGE 8 · 플레이스 분석 요약")
+        _sep("STAGE 7 · 플레이스 분석 요약")
         print(summary_result["text"])
 
         upsert_seo_result(place_id, place_score_result, feedback_result)
 
-        _sep("STAGE 9 · 플레이스 관리 점수 저장 완료")
-        print(f"  place_id={place_id} 플레이스 관리 점수 저장")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 10 · Redis 큐에 완료 알림 적재
-    # ══════════════════════════════════════════════════════════════════════
+    # ── Redis 큐에 완료 알림 적재 ────────────────────────────────────────────
     if round_no == 1:
         # round=1: 키워드 목록만 전달 — Spring이 순위 크롤링 후 round=2 재요청
         result_data = {
