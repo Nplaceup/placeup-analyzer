@@ -125,50 +125,86 @@ class SentimentAnalyzer:
         reviews: list,
         per_review: dict[int, dict],
         batch_size: int = 32,
+        debug: bool = False,
     ) -> dict[str, float]:
         """
-        키워드별 감성 점수 집계.
-        reviews     : [{"id": int, "content": str}, ...] 또는 ORM 객체 리스트
-        per_review  : {review_id: Counter(keyword → count)}
-        반환        : {keyword: 리뷰 감성 점수의 빈도 가중 평균}
-
-        per_review에 있는 리뷰만 배치 추론 — 전체 리뷰가 아닌 NLP 처리된 리뷰만 대상.
+        키워드별 감성 점수 집계 (키워드 포함 문장만 분석).
+        reviews    : [{"id": int, "content": str}, ...] 또는 ORM 객체 리스트
+        per_review : {review_id: Counter(keyword → count)}
+        반환       : {keyword: 문장 단위 감성 점수의 빈도 가중 평균}
         """
-        # per_review에 있는 리뷰만 추론 대상
         target_ids = set(per_review.keys())
         target_reviews = [
             r for r in reviews
             if (r["id"] if isinstance(r, dict) else r.id) in target_ids
         ]
 
-        # 텍스트 정제 + (review_id, cleaned_text) 목록 구성
-        id_text_pairs: list[tuple[int, str]] = []
+        if not target_reviews:
+            return {}
+
+        kiwi = _get_kiwi()
+
+        entries: list[tuple[str, int, str]] = []       # (kw, review_id, cleaned_sent)
+        review_kw_counts: dict[tuple[str, int], int] = {}
+
         for r in target_reviews:
             review_id = r["id"] if isinstance(r, dict) else r.id
             content   = r["content"] if isinstance(r, dict) else r.content
-            cleaned   = self._clean(content)[:512]
-            id_text_pairs.append((review_id, cleaned))
+            counter   = per_review.get(review_id, {})
+            if not counter:
+                continue
 
-        # 배치 추론
+            keywords = list(counter.keys())
+            sents = [s.text for s in kiwi.split_into_sents(content)]
+
+            for sent_text in sents:
+                matched = [kw for kw in keywords if kw in sent_text]
+                if not matched:
+                    continue
+                cleaned = self._clean(sent_text)[:512]
+                for kw in matched:
+                    entries.append((kw, review_id, cleaned))
+                    review_kw_counts.setdefault((kw, review_id), counter[kw])
+
+        if not entries:
+            return {}
+
         koelectra = _get_koelectra()
-        review_scores: dict[int, float] = {}
-        for i in range(0, len(id_text_pairs), batch_size):
-            batch = id_text_pairs[i : i + batch_size]
-            texts = [t for _, t in batch]
-            results = koelectra(texts)
-            for (review_id, _), result in zip(batch, results):
-                label = result["label"]
-                score = result["score"]
-                review_scores[review_id] = score if label == "LABEL_1" else -score
+        texts = [t for _, _, t in entries]
+        inferred: list[float] = []
+        for i in range(0, len(texts), batch_size):
+            for res in koelectra(texts[i : i + batch_size]):
+                s = res["score"] if res["label"] == "LABEL_1" else -res["score"]
+                inferred.append(s)
 
-        score_sum: dict[str, float] = {}
-        weight_sum: dict[str, int] = {}
+        # (kw, review_id) → 문장 점수 목록
+        kw_review_sents: dict[tuple[str, int], list[float]] = {}
+        for (kw, review_id, _), score in zip(entries, inferred):
+            kw_review_sents.setdefault((kw, review_id), []).append(score)
 
-        for review_id, review_score in review_scores.items():
-            counter = per_review.get(review_id, {})
-            for keyword, count in counter.items():
-                score_sum[keyword]  = score_sum.get(keyword, 0.0) + review_score * count
-                weight_sum[keyword] = weight_sum.get(keyword, 0) + count
+        if debug:
+            neg = sum(1 for s in inferred if s < 0)
+            pos = sum(1 for s in inferred if s > 0)
+            print(f"\n  [DEBUG 요약] 긍정 문장={pos}  부정 문장={neg}  전체={len(inferred)}")
+
+            neg_kw: dict[str, int] = {}
+            for (kw, _, _), score in zip(entries, inferred):
+                if score < 0:
+                    neg_kw[kw] = neg_kw.get(kw, 0) + 1
+            if neg_kw:
+                top_neg = sorted(neg_kw.items(), key=lambda x: -x[1])[:15]
+                print(f"  [DEBUG 부정 문장 출현 키워드 top15]")
+                for kw, cnt in top_neg:
+                    print(f"    {kw:<15} {cnt}회")
+
+        score_sum:  dict[str, float] = {}
+        weight_sum: dict[str, int]   = {}
+
+        for (kw, review_id), sent_scores in kw_review_sents.items():
+            avg_score = sum(sent_scores) / len(sent_scores)
+            count = review_kw_counts[(kw, review_id)]
+            score_sum[kw]  = score_sum.get(kw, 0.0) + avg_score * count
+            weight_sum[kw] = weight_sum.get(kw, 0) + count
 
         return {
             kw: round(score_sum[kw] / weight_sum[kw], 4)

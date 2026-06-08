@@ -350,7 +350,7 @@ def create_recommend_keywords_table() -> None:
     컬럼 설명
     ─────────────────────────────────────────────
     place_id               : 매장 ID (FK: place_reviews.places_id)
-    keyword                : 키워드 (1-gram 또는 bigram)
+    keyword                : 키워드
     score                  : 최종 종합 점수
     tfidf_score            : TF-IDF 지표 점수 (정규화 0~1)
     sentiment_score        : 감성 지표 점수 (정규화 0~1, Phase 2 연동 전 기본 1.0)
