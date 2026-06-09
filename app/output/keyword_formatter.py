@@ -1,16 +1,5 @@
-# STAGE 4: 유도어 결합 → 최종 키워드 포맷
-#
-# ─ 변경 이력 ──────────────────────────────────────────────────────────────────
-# v1: CATEGORY_DICT + INDUCEMENT_TEMPLATE 기반 (카테고리 단위 purpose 결정)
-# v2: SemanticMapper + CategoryMapper 기반 (category + property 단위 purpose 결정)
-#     - 사전 직접 조회 → 유사도 fallback (SemanticMapper)
-#     - PURPOSE_RULES[(category, property)] → purpose (CategoryMapper)
-#     - 유도어 결합 대상·목록은 inducement_dict.py에서 관리
-# v3: 지역/업종 기반 키워드 결합 추가
-#     - attach_inducement(place_context=...) → 지역·업종 토큰 결합
-#
-# ─ 파이프라인 위치 ────────────────────────────────────────────────────────────
-# STAGE 3 (keyword_scorer) → [STAGE 4] → STAGE 5 (DB upsert)
+# STAGE 3.5: expand_nlp_keywords — 의미 태깅 + 메뉴 키워드 유도어 확장 (블렌더 투입 전)
+# STAGE 4:   attach_inducement   — 블렌딩 결과 포맷팅 (NLP 항목 base_score 보완, base/competitor 의미 태깅)
 
 from app.data.inducement_dict import get_inducements
 from app.data.semantic_dictionary import get_semantic_tag, SemanticTag
@@ -66,85 +55,96 @@ def _tag_semantic(keyword: str, use_similarity: bool = False) -> dict:
     }
 
 
-# ── 유도어 결합 (메인 함수) ─────────────────────────────────────────────────────
-def attach_inducement(
+def _assign_purpose(category: str, prop: str) -> str:
+    return _category_mapper.assign_purpose(
+        {"category": category, "property": prop}
+    )["keyword_purpose"]
+
+
+# ── 모듈2 전용: 의미 태깅 + 메뉴 키워드 검색형 확장 (STAGE 3.5) ──────────────
+def expand_nlp_keywords(
     scored: list[dict],
-    top_n: int = 20,
     use_similarity: bool = False,
+    keyword_meta: dict | None = None,
 ) -> list[dict]:
     """
-    STAGE 3 scorer 결과에서 상위 top_n개를 받아
-    의미 태깅 → purpose 결정 → 유도어 결합 → 최종 키워드 리스트 반환.
-
-    ※ 지역/업종 기반 키워드 결합은 STAGE 2.5 (keyword_merger.py) 담당.
-       RDS rankings 데이터 기반 CASE A/B/C 로직으로 처리.
-       결합 순서: "{지역/업종} {keyword}" (예: "강남 파스타", "이탈리안 맛집")
-
-    Parameters
-    ----------
-    scored : list[dict]
-        KeywordScorer._calc_score() 반환값
-        [{"keyword": str, "score": float, "breakdown": dict, ...}, ...]
-    top_n : int
-        처리할 상위 키워드 수 (기본 20개)
-    use_similarity : bool
-        True면 미등록 키워드에 SentenceTransformer 유사도 fallback 적용.
-
-    Returns
-    -------
-    list[dict]
-        [
-            {
-                "keyword":          str,    # 원본 or 유도어 결합형
-                "base_score":       float,  # 원본 score 상속
-                "is_ngram":         bool,   # 공백 포함 여부
-                "is_induced":       bool,   # 유도어 결합 여부
-                "keyword_purpose":  str,    # "search" | "marketing"
-                "category":         str,    # 의미 카테고리
-                "property":         str,    # 세부 속성
-                "mapping_type":     str,    # "dictionary" | "semantic" | "unmapped"
-            },
-            ...
-        ]
+    의미 태깅 + 메뉴 키워드 유도어 확장 (블렌더 투입 전, 모듈2 전용).
+    유도어 조건: 사전 직접 매칭 OR mention_count >= 2 — 미충족 시 원본만 반환.
     """
-    result = []
+    result       = []
+    keyword_meta = keyword_meta or {}
 
-    for item in scored[:top_n]:
-        kw    = item["keyword"]
-        score = item["score"]
+    for item in scored:
+        kw = item["keyword"]
 
-        # 1단계: 의미 태깅 (category + property)
         tagged   = _tag_semantic(kw, use_similarity=use_similarity)
         category = tagged["category"]
         prop     = tagged["property"]
+        purpose  = _assign_purpose(category, prop)
 
-        # 2단계: purpose 결정 (CategoryMapper.PURPOSE_RULES)
-        purpose = _category_mapper.assign_purpose({
-            "category": category,
-            "property": prop,
-        })["keyword_purpose"]
-
-        # 공통 베이스 필드
         base = {
-            "base_score":      score,
-            "is_induced":      False,
+            **item,
             "keyword_purpose": purpose,
             "category":        category,
             "property":        prop,
             "mapping_type":    tagged["mapping_type"],
+            "is_induced":      False,
         }
 
-        # 3단계: 원본 키워드 행
-        result.append({**base, "keyword": kw, "is_ngram": " " in kw})
+        result.append({**base, "keyword": kw})
 
-        # 4단계: 유도어 결합 (purpose=search인 경우만)
         if purpose == "search":
-            for word in get_inducements(category, prop):
-                result.append({
-                    **base,
-                    "keyword":    f"{kw} {word}",
-                    "is_ngram":   True,
-                    "is_induced": True,
-                })
+            is_dict_match  = tagged["mapping_type"] == "dictionary"
+            mention_count  = keyword_meta.get(kw, {}).get("mention_count", 0)
+            should_induce  = is_dict_match or mention_count >= 2
+
+            if should_induce:
+                for word in get_inducements(category, prop):
+                    result.append({**base, "keyword": f"{kw} {word}", "is_induced": True})
+
+    return result
+
+
+# ── 블렌딩 결과 포맷팅 전용 (STAGE 4) ────────────────────────────────────────
+def attach_inducement(
+    blended: list[dict],
+    top_n: int = 20,
+    use_similarity: bool = False,
+) -> list[dict]:
+    """
+    블렌딩 결과 상위 top_n개에 최종 포맷 필드 부착 (유도어 추가 없음).
+    NLP 항목: base_score 보완 / base·competitor 항목: 의미 태깅 + 포맷 부착.
+    """
+    result = []
+
+    for item in blended[:top_n]:
+        kw    = item["keyword"]
+        score = item["score"]
+
+        if "keyword_purpose" in item:
+            # NLP 출처: expand_nlp_keywords()에서 이미 태깅/확장됨
+            result.append({**item, "base_score": score})
+        else:
+            # base / competitor 출처: 의미 태깅 + 포맷 (유도어 추가 없음)
+            tagged   = _tag_semantic(kw, use_similarity=use_similarity)
+            category = tagged["category"]
+            prop     = tagged["property"]
+            source   = item.get("source", "")
+
+            # 순위 기반·지역+업종 기반 키워드는 검색 의도가 명확 → 항상 search
+            if source in ("ranked_b", "ranked_a", "base_related", "base_location"):
+                purpose = "search"
+            else:
+                purpose = _assign_purpose(category, prop)
+
+            result.append({
+                **item,
+                "base_score":      score,
+                "is_induced":      False,
+                "keyword_purpose": purpose,
+                "category":        category,
+                "property":        prop,
+                "mapping_type":    tagged["mapping_type"],
+            })
 
     return result

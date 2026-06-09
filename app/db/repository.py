@@ -131,6 +131,9 @@ def get_place_info(place_id: int) -> dict | None:
         "category":      str,   # 업종 (예: "이탈리안", "브런치카페")
         "neighborhood":  str,   # 동 단위 — 접미사 제거 (예: "역삼동" → "역삼")
         "city":          str,   # 구/군 단위 — 접미사 제거 (예: "강남구" → "강남")
+        "description":        str,   # 소개글 (없으면 빈 문자열)
+        "menu_list":          str,   # 메뉴 목록 (없으면 빈 문자열)
+        "image_review_count": int,   # 사진 포함 리뷰 수 (없으면 0)
     }
     매장 없으면 None 반환.
 
@@ -139,7 +142,8 @@ def get_place_info(place_id: int) -> dict | None:
     with ReadSession() as session:
         result = session.execute(
             text("""
-                SELECT place_name, category, address
+                SELECT place_name, category, address, 
+                    description, menu_list, image_review_count
                 FROM places
                 WHERE id = :place_id
                 LIMIT 1
@@ -164,6 +168,9 @@ def get_place_info(place_id: int) -> dict | None:
         "category":     result.category or "",
         "neighborhood": neighborhood,   # 예: "역삼", "운서"
         "city":         city,           # 예: "강남"(강남구→강남) / "중구"(중구→유지, 2자 이하 제거 안 함)
+        "description":        result.description       or "",
+        "menu_list":          result.menu_list         or "",
+        "image_review_count": result.image_review_count or 0,
     }
 
 
@@ -189,25 +196,8 @@ def get_competitor_place_ids(
     limit:            int = 10,
 ) -> list[int]:
     """
-    동일 카테고리 + 도시 내 다른 매장 ID 조회 (경쟁업체 분석용).
-    리뷰 수 내림차순으로 정렬해 실제로 잘 운영되는 업체를 우선 선택한다.
-
-    Parameters
-    ----------
-    category         : 업종 문자열 (예: "파스타", "이탈리안")
-    city             : 구 단위 도시명 (예: "강남")  — get_place_info() 반환값
-    exclude_place_id : 결과에서 제외할 내 매장 ID
-    limit            : 리뷰수 상위 N개 (config.COMPETITOR_LIMIT 기본값 10)
-
-    Returns
-    -------
-    list[int]  경쟁업체 place_id 목록 (리뷰수 내림차순, 최대 limit개)
-
-    Notes
-    -----
-    - category: LIKE 매칭 — places.category 정규화 불일치 대응
-    - address:  LIKE 매칭 — '{시도} {구군} {동}' 형식에서 구 단위 포함 여부 확인
-    - 리뷰수 정렬: 리뷰 수로 내림차순 정렬해 실제로 잘 운영되는 업체를 우선 선택
+    동일 카테고리+도시 내 매장 ID 조회 (경쟁업체 분석용).
+    category/address는 LIKE 매칭 — 정규화 불일치 대응. 리뷰수 내림차순.
     """
     with ReadSession() as session:
         result = session.execute(
@@ -238,26 +228,8 @@ def get_competitor_place_ids(
 
 def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
     """
-    여러 매장의 최신 키워드 + 순위 목록 조회 (경쟁업체 분석용).
-
-    매장별로 가장 최근 크롤링 기준 키워드를 가져온다.
-    rank_no를 포함해 반환하므로 순위역전 분석에 바로 사용 가능.
-
-    Parameters
-    ----------
-    place_ids : 조회할 매장 ID 목록
-
-    Returns
-    -------
-    dict[int, list[dict]]
-        {
-            place_id: [
-                {"keyword": str, "rank_no": int},
-                ...
-            ],
-            ...
-        }
-    빈 리스트 입력 시 빈 dict 반환.
+    여러 매장의 최신 키워드+순위 조회 (경쟁업체 분석용).
+    반환: {place_id: [{"keyword": str, "rank_no": int}, ...]}
     """
     if not place_ids:
         return {}
@@ -285,14 +257,65 @@ def get_keywords_by_place_ids(place_ids: list[int]) -> dict[int, list[dict]]:
         return mapping
 
 
+def get_related_keywords_for_place(
+    place_id:     int,
+    city:         str,
+    neighborhood: str,
+    top_n:        int = 10,
+) -> list[dict]:
+    """
+    매장 rankings 키워드에 매핑된 연관검색어 조회.
+    위치(city/neighborhood LIKE 매칭) + 검색량>0 필터, 검색량 내림차순 top_n.
+    """
+    if not place_id or (not city and not neighborhood):
+        return []
+
+    with ReadSession() as session:
+        result = session.execute(
+            text("""
+                SELECT DISTINCT ON (kr.name)
+                       kr.name                  AS keyword,
+                       kr.monthly_search_volume,
+                       kr.competition_level
+                FROM   keyword_related kr
+                JOIN   rankings r ON r.keyword_id = kr.keywords_id
+                WHERE  r.place_id = :place_id
+                  AND  kr.monthly_search_volume > 0
+                  AND  (
+                       kr.name LIKE :city_pattern
+                    OR kr.name LIKE :neighborhood_pattern
+                  )
+                ORDER  BY kr.name, kr.monthly_search_volume DESC
+            """),
+            {
+                "place_id":             place_id,
+                "city_pattern":         f"%{city}%",
+                "neighborhood_pattern": f"%{neighborhood}%",
+            }
+        )
+        rows = [
+            {
+                "keyword":               row.keyword,
+                "monthly_search_volume": row.monthly_search_volume,
+                "competitive_level": row.competition_level or "낮음",
+            }
+            for row in result
+        ]
+
+    return sorted(rows, key=lambda x: -x["monthly_search_volume"])[:top_n]
+
+
 def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
-    """
-    키워드 월간 검색량 조회 (keyword_search_volumes 테이블)
-    - 동일 키워드의 가장 최신 데이터만 사용
-    반환: {keyword_name: monthly_search_volume, ...}
-    """
     if not keyword_names:
         return {}
+
+    # 공백 제거 → 원본 키워드 목록 매핑 (1:N 대응)
+    normalized_to_originals: dict[str, list[str]] = {}
+    for kw in keyword_names:
+        norm = "".join(kw.split())
+        normalized_to_originals.setdefault(norm, []).append(kw)
+
+    normalized = list(normalized_to_originals.keys())
 
     with ReadSession() as session:
         result = session.execute(
@@ -305,9 +328,15 @@ def get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
                 WHERE  k.keyword_name = ANY(:names)
                 ORDER  BY k.keyword_name, ksv.created_at DESC
             """),
-            {"names": keyword_names}
+            {"names": normalized}
         )
-        return {row.keyword_name: row.monthly_search_volume for row in result}
+        output = {}
+        for row in result:
+            vol = row.monthly_search_volume
+            # 동일한 정규화 키워드에 매핑된 원본 키워드 전부에 검색량 부여
+            for original_kw in normalized_to_originals.get(row.keyword_name, []):
+                output[original_kw] = vol
+        return output
 
 # ───────────────────────────────────────────────
 # WRITE (Local DB - 분석 결과 적재)
@@ -322,13 +351,12 @@ def create_recommend_keywords_table() -> None:
     컬럼 설명
     ─────────────────────────────────────────────
     place_id               : 매장 ID (FK: place_reviews.places_id)
-    keyword                : 키워드 (1-gram 또는 bigram)
+    keyword                : 키워드
     score                  : 최종 종합 점수
     tfidf_score            : TF-IDF 지표 점수 (정규화 0~1)
     sentiment_score        : 감성 지표 점수 (정규화 0~1, Phase 2 연동 전 기본 1.0)
     recency_score          : 최신성 지표 점수 (0~1)
     consistency_score      : 일관성 지표 점수 (0~1)
-    is_ngram               : bigram 여부 (공백 포함 = True)
     is_induced             : 유도어 결합 여부
     keyword_purpose        : 'search' | 'marketing'
     category               : '음식' | '장소' | '서비스' | '분위기' | '미분류'
@@ -354,7 +382,6 @@ def create_recommend_keywords_table() -> None:
                 sentiment_score        FLOAT         NOT NULL DEFAULT 1.0,
                 recency_score          FLOAT         NOT NULL DEFAULT 0.0,
                 consistency_score      FLOAT         NOT NULL DEFAULT 0.0,
-                is_ngram               BOOLEAN       NOT NULL DEFAULT FALSE,
                 is_induced             BOOLEAN       NOT NULL DEFAULT FALSE,
                 keyword_purpose        VARCHAR(20)   NOT NULL DEFAULT 'marketing',
                 category               VARCHAR(20)   NOT NULL DEFAULT '미분류',
@@ -369,9 +396,7 @@ def create_recommend_keywords_table() -> None:
                 UNIQUE (place_id, keyword)
             )
         """))
-        # ── 기존 테이블에 STAGE 2.5 신규 컬럼 추가 (이미 있으면 무시) ────────────
-        # CREATE TABLE IF NOT EXISTS는 기존 테이블의 스키마를 변경하지 않으므로
-        # ALTER TABLE로 별도 처리
+        # ── 신규 컬럼 추가 (이미 있으면 무시) ────────────────────────────────────
         new_columns = [
             ("case_type",             "CHAR(1)     NOT NULL DEFAULT 'C'"),
             ("rank_no",               "INT"),
@@ -393,29 +418,8 @@ def create_recommend_keywords_table() -> None:
 
 def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: dict) -> int:
     """
-    formatter 결과를 로컬 DB에 upsert.
-
-    Parameters
-    ──────────
-    place_id    : 매장 ID
-    formatted   : attach_inducement() + keyword_meta 주입 후 반환값
-                  [{"keyword", "base_score", "is_ngram", "is_induced",
-                    "keyword_purpose", "category",
-                    "case_type", "rank_no", "rank_no_change",
-                    "monthly_search_volume", "mention_count",
-                    "competition_level", "is_opportunity"}, ...]
-    scored_map  : keyword → breakdown dict 매핑 (score breakdown 저장용)
-                  {keyword: {"tfidf": float, "sentiment": float,
-                             "recency": float, "consistency": float}}
-
-    Returns
-    ───────
-    int : upsert된 행 수
-
-    동작
-    ───────
-    - (place_id, keyword) 중복 시 모든 수치 컬럼 덮어쓰기 (ON CONFLICT DO UPDATE)
-    - analyzed_at 갱신으로 마지막 분석 시각 추적 가능
+    attach_inducement() + keyword_meta 결합 결과를 로컬 DB에 upsert.
+    (place_id, keyword) 충돌 시 전체 수치 컬럼 덮어쓰기.
     """
     if not formatted:
         return 0
@@ -423,7 +427,7 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
     rows = []
     for item in formatted:
         kw = item["keyword"]
-        # 원본 키워드의 breakdown: 유도어 결합형은 마지막 토큰 제거해 기반 키워드 복원
+        # 유도어 결합형은 마지막 토큰 제거해 기반 키워드의 breakdown 조회
         base_kw   = " ".join(kw.split()[:-1]) if item["is_induced"] else kw
         breakdown = scored_map.get(base_kw, {})
 
@@ -435,11 +439,9 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
             "sentiment_score":        breakdown.get("sentiment",   1.0),
             "recency_score":          breakdown.get("recency",     0.0),
             "consistency_score":      breakdown.get("consistency", 0.0),
-            "is_ngram":               item["is_ngram"],
             "is_induced":             item["is_induced"],
             "keyword_purpose":        item["keyword_purpose"],
             "category":               item["category"],
-            # STAGE 2.5 메타데이터
             "case_type":              item.get("case_type",             "C"),
             "rank_no":                item.get("rank_no"),
             "rank_no_change":         item.get("rank_no_change",        0),
@@ -451,11 +453,15 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
 
     with WriteSession() as session:
         session.execute(
+            text("DELETE FROM recommend_keywords WHERE place_id = :place_id"),
+            {"place_id": place_id},
+        )
+        session.execute(
             text("""
                 INSERT INTO recommend_keywords
                     (place_id, keyword, score,
                      tfidf_score, sentiment_score, recency_score, consistency_score,
-                     is_ngram, is_induced, keyword_purpose, category,
+                     is_induced, keyword_purpose, category,
                      case_type, rank_no, rank_no_change,
                      monthly_search_volume, mention_count,
                      competition_level, is_opportunity,
@@ -463,30 +469,11 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
                 VALUES
                     (:place_id, :keyword, :score,
                      :tfidf_score, :sentiment_score, :recency_score, :consistency_score,
-                     :is_ngram, :is_induced, :keyword_purpose, :category,
+                     :is_induced, :keyword_purpose, :category,
                      :case_type, :rank_no, :rank_no_change,
                      :monthly_search_volume, :mention_count,
                      :competition_level, :is_opportunity,
                      NOW())
-                ON CONFLICT (place_id, keyword)
-                DO UPDATE SET
-                    score                  = EXCLUDED.score,
-                    tfidf_score            = EXCLUDED.tfidf_score,
-                    sentiment_score        = EXCLUDED.sentiment_score,
-                    recency_score          = EXCLUDED.recency_score,
-                    consistency_score      = EXCLUDED.consistency_score,
-                    is_ngram               = EXCLUDED.is_ngram,
-                    is_induced             = EXCLUDED.is_induced,
-                    keyword_purpose        = EXCLUDED.keyword_purpose,
-                    category               = EXCLUDED.category,
-                    case_type              = EXCLUDED.case_type,
-                    rank_no                = EXCLUDED.rank_no,
-                    rank_no_change         = EXCLUDED.rank_no_change,
-                    monthly_search_volume  = EXCLUDED.monthly_search_volume,
-                    mention_count          = EXCLUDED.mention_count,
-                    competition_level      = EXCLUDED.competition_level,
-                    is_opportunity         = EXCLUDED.is_opportunity,
-                    analyzed_at            = NOW()
             """),
             rows
         )
@@ -504,7 +491,7 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
     """
     저장된 추천 키워드 조회 (score 내림차순)
     반환: [{"keyword", "score", "keyword_purpose", "category",
-            "is_ngram", "is_induced",
+            "is_induced",
             "case_type", "rank_no", "rank_no_change",
             "monthly_search_volume", "mention_count",
             "competition_level", "is_opportunity",
@@ -515,7 +502,7 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
             text("""
                 SELECT keyword, score, tfidf_score, sentiment_score,
                        recency_score, consistency_score,
-                       is_ngram, is_induced, keyword_purpose, category,
+                       is_induced, keyword_purpose, category,
                        case_type, rank_no, rank_no_change,
                        monthly_search_volume, mention_count,
                        competition_level, is_opportunity,
@@ -529,24 +516,21 @@ def get_recommend_keywords(place_id: int) -> list[dict]:
         return [dict(row._mapping) for row in result]
 
 def create_seo_results_table() -> None:
-    """
-    seo_results 테이블이 없으면 생성 (멱등 실행 가능)
-    """
     with WriteSession() as session:
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS seo_results (
-                id                     SERIAL PRIMARY KEY,
-                place_id               INT           NOT NULL,
-                score                  INT           NOT NULL,
-                grade                  VARCHAR(20)   NOT NULL,
-                keyword_optimization   FLOAT         NOT NULL DEFAULT 0.0,
-                review_quality         FLOAT         NOT NULL DEFAULT 0.0,
-                search_exposure        FLOAT         NOT NULL DEFAULT 0.0,
-                competition            FLOAT         NOT NULL DEFAULT 0.0,
-                summary                TEXT          NOT NULL,
-                seo_feedback           TEXT          NOT NULL DEFAULT '[]',
-                review_feedback        TEXT          NOT NULL DEFAULT '[]',
-                created_at             TIMESTAMP     NOT NULL DEFAULT NOW(),
+                id                   SERIAL PRIMARY KEY,
+                place_id             INT           NOT NULL,
+                score                INT           NOT NULL,
+                grade                VARCHAR(20)   NOT NULL,
+                place_completeness   FLOAT         NOT NULL DEFAULT 0.0,
+                review_quality       FLOAT         NOT NULL DEFAULT 0.0,
+                place_summary        TEXT          NOT NULL DEFAULT '{}',
+                summary              TEXT          NOT NULL,
+                seo_feedback         TEXT          NOT NULL DEFAULT '[]',
+                review_feedback      TEXT          NOT NULL DEFAULT '[]',
+                competitor_feedback  TEXT          NOT NULL DEFAULT '[]',
+                created_at           TIMESTAMP     NOT NULL DEFAULT NOW(),
                 UNIQUE (place_id)
             )
         """))
@@ -555,9 +539,6 @@ def create_seo_results_table() -> None:
 
 
 def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) -> None:
-    """
-    SEO Score + 피드백 결과를 seo_results 테이블에 upsert
-    """
     import json
     b = seo_result["breakdown"]
 
@@ -566,57 +547,57 @@ def upsert_seo_result(place_id: int, seo_result: dict, feedback_result: dict) ->
             text("""
                 INSERT INTO seo_results
                     (place_id, score, grade,
-                     keyword_optimization, review_quality,
-                     search_exposure, competition,
+                     place_completeness, review_quality,
+                     place_summary,
                      summary, seo_feedback, review_feedback,
+                     competitor_feedback,
                      created_at)
                 VALUES
                     (:place_id, :score, :grade,
-                     :keyword_optimization, :review_quality,
-                     :search_exposure, :competition,
+                     :place_completeness, :review_quality,
+                     :place_summary,
                      :summary, :seo_feedback, :review_feedback,
+                     :competitor_feedback,
                      NOW())
                 ON CONFLICT (place_id)
                 DO UPDATE SET
-                    score                  = EXCLUDED.score,
-                    grade                  = EXCLUDED.grade,
-                    keyword_optimization   = EXCLUDED.keyword_optimization,
-                    review_quality         = EXCLUDED.review_quality,
-                    search_exposure        = EXCLUDED.search_exposure,
-                    competition            = EXCLUDED.competition,
-                    summary                = EXCLUDED.summary,
-                    seo_feedback           = EXCLUDED.seo_feedback,
-                    review_feedback        = EXCLUDED.review_feedback,
-                    created_at             = NOW()
+                    score               = EXCLUDED.score,
+                    grade               = EXCLUDED.grade,
+                    place_completeness  = EXCLUDED.place_completeness,
+                    review_quality      = EXCLUDED.review_quality,
+                    place_summary       = EXCLUDED.place_summary,
+                    summary             = EXCLUDED.summary,
+                    seo_feedback        = EXCLUDED.seo_feedback,
+                    review_feedback     = EXCLUDED.review_feedback,
+                    competitor_feedback = EXCLUDED.competitor_feedback,
+                    created_at          = NOW()
             """),
             {
-                "place_id":             place_id,
-                "score":                seo_result["total"],
-                "grade":                seo_result["grade"],
-                "keyword_optimization": b["keyword_optimization"],
-                "review_quality":       b["review_quality"],
-                "search_exposure":      b["search_exposure"],
-                "competition":          b["competition"],
-                "summary":              feedback_result["summary"],
-                "seo_feedback":         json.dumps(feedback_result["seo_feedback"],    ensure_ascii=False),
-                "review_feedback":      json.dumps(feedback_result["review_feedback"], ensure_ascii=False),
+                "place_id":            place_id,
+                "score":               seo_result["total"],
+                "grade":               seo_result["grade"],
+                "place_completeness":  b["place_completeness"],
+                "review_quality":      b["review_quality"],
+                "place_summary":       json.dumps(feedback_result.get("place_summary", {}), ensure_ascii=False),
+                "summary":             feedback_result["summary"],
+                "seo_feedback":        json.dumps(feedback_result["seo_feedback"],        ensure_ascii=False),
+                "review_feedback":     json.dumps(feedback_result["review_feedback"],     ensure_ascii=False),
+                "competitor_feedback": json.dumps(feedback_result["competitor_feedback"], ensure_ascii=False),
             }
         )
         session.commit()
-    print(f"[DB] place_id={place_id} SEO 결과 upsert 완료")
+    print(f"[DB] place_id={place_id} 플레이스 관리 점수 upsert 완료")
     
 
 def get_seo_result(place_id: int) -> dict | None:
-    """
-    저장된 SEO 결과 조회
-    """
     with ReadSession() as session:
         result = session.execute(
             text("""
                 SELECT place_id, score, grade,
-                       keyword_optimization, review_quality,
-                       search_exposure, competition,
+                       place_completeness, review_quality,
+                       place_summary,
                        summary, seo_feedback, review_feedback,
+                       competitor_feedback,
                        created_at
                 FROM seo_results
                 WHERE place_id = :place_id

@@ -1,35 +1,29 @@
+import math
 from collections import Counter
 
-# ── 파이프라인 모듈 ─────────────────────────────────────────────────────────
-from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
-from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
-from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
-from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
-from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result  # STAGE 2.5 (외부 키워드 결합)
-from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
-from app.output.keyword_formatter import attach_inducement                 # STAGE 4  (카테고리 태깅 + 유도어 결합)
+from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer
+from app.services.nlp.keyword_normalizer import KeywordNormalizer
+from app.services.nlp.keyword_merger import merge_keywords, summarize_merge_result, get_competition_level, COMPETITION_THRESHOLDS
+from app.services.nlp.sentiment import SentimentAnalyzer
+from app.services.scoring.keyword_scorer import keywordScorer
+from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement
 
-# ── 분석 모듈 ───────────────────────────────────────────────────────────────
 from app.services.analysis.user_type_classifier import classify_user_type, get_module_weights
-from app.services.analysis.base_keyword_generator import generate_base_keywords   # 모듈1
-from app.services.analysis.competitor_analyzer import analyze_competitors          # 모듈3
+from app.services.analysis.base_keyword_generator import generate_base_keywords
+from app.services.analysis.competitor_analyzer import analyze_competitors
 from app.services.analysis.keyword_blender import blend_keywords
 
-# ── 파이프라인 제어 플래그 ───────────────────────────────────────────────────
-from app.core.config import USE_BIGRAM
+from app.core.config import CASE_B_GUARANTEED_TOP_N
+from app.data.blocklist import KEYWORD_BLOCKLIST
 
-# ── 데이터 필터 ─────────────────────────────────────────────────────────────
-from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
-
-# ── DB ─────────────────────────────────────────────────────────────────────
 from app.db.repository import (
     get_reviews, get_review_dates, get_place_info,
     create_recommend_keywords_table, upsert_recommend_keywords,
-    get_recommend_keywords,
-    create_seo_results_table, upsert_seo_result,
+    upsert_seo_result, get_keyword_monthly_search,
 )
-from app.services.scoring.seo_scorer import SEOScorer
-from app.services.scoring.seo_feedback import SEOFeedback
+from app.services.scoring.place_scorer import PlaceScorer
+from app.services.scoring.place_feedback import PlaceFeedback
+from app.services.scoring.place_summary import PlaceSummary
 from app.db.repository import get_recommend_keywords
 import redis
 import json
@@ -65,7 +59,7 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     reviews      = get_reviews(place_id)
     review_dates = get_review_dates(place_id)
-    place_info   = get_place_info(place_id)   # 지역/업종 컨텍스트
+    place_info   = get_place_info(place_id)
 
     if not reviews:
         print(f"[SKIP] place_id={place_id} 리뷰 없음")
@@ -91,36 +85,34 @@ def run(place_id: int, round_no: int = 1):
     # ══════════════════════════════════════════════════════════════════════
     user_type = classify_user_type(len(reviews))
     weights   = get_module_weights(user_type)
-    base_kws  = generate_base_keywords(place_info) if place_info else []
+    base_kws  = generate_base_keywords(place_info, place_id=place_id, round_no=round_no) if place_info else []
 
     _sep(f"사용자 유형 분류 + 모듈1 · 기본 키워드")
     print(f"  사용자 유형    : {user_type}")
     print(f"  모듈 가중치    : base={weights['base']}  nlp={weights['nlp']}  competitor={weights['competitor']}")
     print(f"  기본 키워드    : {len(base_kws)}개")
     for item in base_kws[:10]:
-        print(f"    {item['keyword']:<22} 검색량={item['monthly_search_volume']:>8,}  score={item['score']:.4f}")
+        score_str = f"{item['score']:.4f}" if item["score"] is not None else "None"
+        print(f"    {item['keyword']:<22} 검색량={item['monthly_search_volume']:>8,}  score={score_str}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # 모듈2 · NLP 파이프라인 (cold_start는 리뷰 부족으로 스킵)
-    # STAGE 1 → 1a → 1b → 2 → 2.5 → 3
+    # 모듈2 · NLP 파이프라인
     # ══════════════════════════════════════════════════════════════════════
-    nlp_keywords: list[dict] = []
-    keyword_meta: dict       = {}
-    scored:       list[dict] = []
+    nlp_keywords:  list[dict] = []
+    marketing_kws: list[dict] = []
+    keyword_meta:  dict       = {}
+    scored:        list[dict] = []
 
     if user_type == "cold_start":
         _sep("모듈2 · NLP 스킵 (cold_start — 리뷰 부족)")
         print(f"  리뷰 수 {len(reviews)}개 ≤ 기준치 → NLP 파이프라인 생략")
     else:
 
-    # ── STAGE 1 ───────────────────────────────────────────────────────────
-    # ReviewTfidfAnalyzer: ReviewPreprocessor.clean_text → Okt POS 태깅
-    # 반환: {review_id: Counter(keyword → count)}
-    # ─────────────────────────────────────────────────────────────────────
+    # ── STAGE 1 · 형태소 분석 ────────────────────────────────────────────────
         analyzer   = ReviewTfidfAnalyzer()
         per_review = analyzer.extract_per_review(reviews)
 
-        _sep("STAGE 1 · 형태소 분석 (Okt POS)")
+        _sep("STAGE 1 · 형태소 분석 (Kiwi POS)")
         total_tokens_s1 = sum(sum(c.values()) for c in per_review.values())
         unique_kw_s1    = len(set(kw for c in per_review.values() for kw in c))
         print(f"  리뷰별 Counter 수  : {len(per_review)}개")
@@ -131,9 +123,7 @@ def run(place_id: int, round_no: int = 1):
             all_s1.update(c)
         _print_counter_sample("전체 합산 키워드", all_s1, top=20)
 
-        # ── STAGE 1a ──────────────────────────────────────────────────────
-        # KEYWORD_BLOCKLIST 필터 + KeywordNormalizer
-        # ─────────────────────────────────────────────────────────────────
+        # ── STAGE 1a · 블랙리스트 필터 + 표현 통일 ──────────────────────────
         normalizer = KeywordNormalizer()
 
         per_review_clean: dict[int, Counter] = {}
@@ -159,7 +149,7 @@ def run(place_id: int, round_no: int = 1):
             all_clean.update(c)
         _print_counter_sample("정제 후 합산 키워드", all_clean, top=20)
 
-        # ── STAGE 1b ──────────────────────────────────────────────────────
+        # ── STAGE 1b · TF-IDF ────────────────────────────────────────────────
         tfidf = analyzer.compute_tfidf(per_review_clean)
 
         _sep("STAGE 1b · TF-IDF")
@@ -171,121 +161,83 @@ def run(place_id: int, round_no: int = 1):
         for kw, score in sorted(tfidf.items(), key=lambda x: -x[1])[:20]:
             print(f"  {kw:<18} {score:>8.5f}")
 
-        # ── STAGE 2 ───────────────────────────────────────────────────────
-        # N-gram PMI 필터링  (USE_BIGRAM=False 이면 전체 스킵)
-        # ─────────────────────────────────────────────────────────────────
-        if USE_BIGRAM:
-            ngram_extractor    = NgramExtractor(analyzer)
-            bigrams_per_review = ngram_extractor.extract_bigrams_per_review(reviews)
-
-            unigram_counts: Counter = Counter()
-            for counter in per_review.values():
-                unigram_counts.update(counter)
-
-            filtered_bigrams = ngram_extractor.compute_pmi(
-                bigrams_per_review,
-                unigram_counts,
-                min_count=2,
-                df_min=3,
-                pmi_threshold=2.0,
-            )
-
-            if filtered_bigrams:
-                max_pmi     = max(filtered_bigrams.values())
-                max_tfidf_v = max(tfidf.values()) if tfidf else 1.0
-                normalized_bigrams = {
-                    bg: round((pmi / max_pmi) * max_tfidf_v, 6)
-                    for bg, pmi in filtered_bigrams.items()
-                }
-            else:
-                normalized_bigrams = {}
-
-            merged_tfidf: dict = {**tfidf, **normalized_bigrams}
-
-            valid_bigrams = set(filtered_bigrams.keys())
-            merged_per_review: dict[int, Counter] = {}
-            for review_id, counter in per_review_clean.items():
-                merged = Counter(counter)
-                merged.update({
-                    bg: cnt
-                    for bg, cnt in bigrams_per_review.get(review_id, {}).items()
-                    if bg in valid_bigrams
-                })
-                merged_per_review[review_id] = merged
-
-            _sep("STAGE 2 · N-gram PMI")
-            all_bigrams_raw: Counter = Counter()
-            for c in bigrams_per_review.values():
-                all_bigrams_raw.update(c)
-            cnt_min  = sum(1 for v in all_bigrams_raw.values() if v >= 2)
-            bigram_df_debug: Counter = Counter()
-            for c in bigrams_per_review.values():
-                for bg in c:
-                    bigram_df_debug[bg] += 1
-            cnt_df   = sum(1 for bg, v in all_bigrams_raw.items()
-                           if v >= 2 and bigram_df_debug[bg] >= 2)
-            print(f"  전체 bigram 후보        : {len(all_bigrams_raw):>4}개")
-            print(f"  min_count≥2 통과        : {cnt_min:>4}개")
-            print(f"  + df_min≥2 통과         : {cnt_df:>4}개  (단일 리뷰 반복 제거 후)")
-            print(f"  + PMI>1.0 최종 통과     : {len(filtered_bigrams):>4}개")
-            if filtered_bigrams:
-                print(f"\n  {'bigram':<22} {'PMI':>6}  df  →  {'정규화 TF-IDF':>12}")
-                print(f"  {'-'*52}")
-                for bg, pmi in sorted(filtered_bigrams.items(), key=lambda x: -x[1])[:15]:
-                    df_val = bigram_df_debug[bg]
-                    print(f"  {bg:<22} {pmi:>6.4f}  {df_val:>2}  →  {normalized_bigrams[bg]:>12.6f}")
-            else:
-                print("  ※ PMI 통과 bigram 없음")
-
-        else:
-            # USE_BIGRAM = False → bigram 없이 TF-IDF 단어만 STAGE 2.5로 전달
-            merged_tfidf: dict               = dict(tfidf)
-            merged_per_review: dict[int, Counter] = per_review_clean
-
-            _sep("STAGE 2 · N-gram PMI [SKIPPED]")
-            print(f"  USE_BIGRAM=False — 슬라이딩 윈도우 오염 문제로 bigram 스킵")
-            print(f"  STAGE 2.5 입력: TF-IDF 단어 {len(merged_tfidf)}개")
-
-        # ── STAGE 2.5 ─────────────────────────────────────────────────────
-        # 외부 키워드 결합 (RDS rankings 기반 CASE A/B/C 분류)
-        # ─────────────────────────────────────────────────────────────────
+        # ── STAGE 2 · 외부 키워드 결합 ──────────────────────────────────────
         merged_tfidf, merged_per_review, keyword_meta = merge_keywords(
             place_id       = place_id,
-            nlp_tfidf      = merged_tfidf,
-            nlp_per_review = merged_per_review,
+            nlp_tfidf      = dict(tfidf),
+            nlp_per_review = per_review_clean,
         )
 
-        _sep("STAGE 2.5 · 외부 키워드 결합")
+        _sep("STAGE 2 · 외부 키워드 결합")
         summarize_merge_result(keyword_meta, merged_tfidf)
 
-        # ── STAGE 3 ───────────────────────────────────────────────────────
-        # 스코어링
-        # ─────────────────────────────────────────────────────────────────
+        # ── STAGE 2.5 · 감성 분석 ────────────────────────────────────────────
+        sentiment_analyzer = SentimentAnalyzer()
+        sentiment_scores   = sentiment_analyzer.analyze(reviews, merged_per_review)
+
+        _sep("STAGE 2.5 · 감성 분석")
+        matched = sum(1 for v in sentiment_scores.values() if v != 0.0)
+        print(f"  감성 매칭 키워드 : {matched}개 / 전체 {len(sentiment_scores)}개")
+        pos = sum(1 for v in sentiment_scores.values() if v > 0)
+        neg = sum(1 for v in sentiment_scores.values() if v < 0)
+        print(f"  긍정 {pos}개 / 부정 {neg}개 / 중립 {len(sentiment_scores) - pos - neg}개")
+        print(f"\n  {'키워드':<18} {'감성(-1~1)':>10}")
+        print(f"  {'-'*30}")
+        for kw, sc in sorted(sentiment_scores.items(), key=lambda x: -abs(x[1]))[:15]:
+            bar = "+" * int(sc * 5) if sc > 0 else "-" * int(abs(sc) * 5)
+            print(f"  {kw:<18} {sc:>+8.4f}  {bar}")
+
+        # ── STAGE 3 · 스코어링 ───────────────────────────────────────────────
         scorer = keywordScorer()
         scored = scorer._calc_score(
             tfidf        = merged_tfidf,
             per_review   = merged_per_review,
             review_dates = review_dates,
-            sentiment    = None   # 감성 사전 완성 후 연결
+            sentiment    = sentiment_scores,
         )
 
         _sep("STAGE 3 · 스코어링")
         print(f"  채점 키워드 수 : {len(scored)}개")
-        print(f"\n  {'키워드':<18} {'최종':>6}  {'TF-IDF':>7}  {'감성':>6}  {'최신성':>6}  {'일관성':>6}")
-        print(f"  {'-'*62}")
+        print(f"\n  {'키워드':<22} {'최종':>6}  {'TF-IDF':>7}  {'감성':>6}  {'최신성':>6}  {'일관성':>6}")
+        print(f"  {'-'*66}")
         for item in scored[:25]:
             b = item["breakdown"]
             print(
-                f"  {item['keyword']:<18} {item['score']:>6.4f}  "
+                f"  {item['keyword']:<22} {item['score']:>6.4f}  "
                 f"{b['tfidf']:>7.4f}  {b['sentiment']:>6.4f}  "
                 f"{b['recency']:>6.4f}  {b['consistency']:>6.4f}"
             )
 
-        # STAGE 3.5 · 유사도 중복 제거 (구현 예정)
-        # scored = semantic_dedup(scored)
+        expanded = expand_nlp_keywords(scored, use_similarity=True, keyword_meta=keyword_meta)
 
-        # NLP 결과를 blender 입력 형식으로 변환
-        nlp_keywords = [{**item, "source": "nlp"} for item in scored]
+        # 이용방식(혼밥/혼술)은 다이닝 스타일 → 고유 메뉴보다 낮은 우선순위
+        for item in expanded:
+            if item.get("property") == "이용방식":
+                item["score"] = round(item["score"] * 0.5, 4)
+
+        nlp_keywords = [
+            {**item, "source": "nlp"}
+            for item in expanded
+            if item.get("keyword_purpose") != "marketing"
+        ]
+
+        _sep("STAGE 3.5 · NLP 키워드 의미 태깅 + 메뉴 검색형 확장")
+        search_kws    = [it for it in expanded if it["keyword_purpose"] == "search"]
+        marketing_kws = [it for it in expanded if it["keyword_purpose"] == "marketing"]
+        induced_kws   = [it for it in expanded if it["is_induced"]]
+        print(f"  원본 scored     : {len(scored)}개")
+        print(f"  확장 후 총 키워드 : {len(expanded)}개  "
+              f"(search={len(search_kws)}, marketing={len(marketing_kws)}, "
+              f"induced={len(induced_kws)})")
+        if induced_kws:
+            print(f"\n  [유도어 결합형 샘플]")
+            for it in induced_kws[:8]:
+                print(f"    {it['keyword']:<28}  {it['category']}/{it['property']}")
+        marketing_non_trivial = [it for it in marketing_kws if not it.get("is_induced") and it.get("category","미분류") != "미분류"]
+        if marketing_non_trivial:
+            print(f"\n  [마케팅 키워드] ({len(marketing_non_trivial)}개 → Redis 전달)")
+            for it in sorted(marketing_non_trivial, key=lambda x: -x["score"]):
+                print(f"    {it['keyword']:<15} {it['category']:<8}/{it.get('property',''):<15}  score={it['score']:.4f}")
 
     # ══════════════════════════════════════════════════════════════════════
     # 모듈3 · 경쟁업체 분석
@@ -320,6 +272,40 @@ def run(place_id: int, round_no: int = 1):
         weights           = weights,
     )
 
+    # CASE B: 순위 키워드를 상위 N개 보장 삽입 — 점수 = (1/rank_no) * log(vol+1)
+    if keyword_meta:
+        ranked_b_kws = sorted(
+            [
+                (kw, meta) for kw, meta in keyword_meta.items()
+                if meta["case_type"] == "B" and meta.get("rank_no") is not None
+            ],
+            key=lambda x: x[1]["rank_no"],
+        )[:CASE_B_GUARANTEED_TOP_N]
+
+        blended_kw_set = {item["keyword"] for item in blended}
+        forced_items   = []
+        for kw, meta in ranked_b_kws:
+            if kw not in blended_kw_set:
+                rank_no = meta["rank_no"]
+                vol     = meta["monthly_search_volume"]
+                ranked_b_score = round((1.0 / rank_no) * math.log(vol + 1), 6)
+                forced_items.append({
+                    "keyword":               kw,
+                    "score":                 ranked_b_score,
+                    "source":                "ranked_b",
+                    "monthly_search_volume": vol,
+                })
+
+        if forced_items:
+            from app.core.config import BLEND_TOP_N
+            blended = list(blended)
+            combined = forced_items + blended
+            combined.sort(key=lambda x: -x["score"])
+            blended = combined[:BLEND_TOP_N]
+            print(f"\n  [CASE B 강제 삽입] {len(forced_items)}개: "
+                  + ", ".join(f"{item['keyword']}({keyword_meta[item['keyword']]['rank_no']}위, score={item['score']:.4f})"
+                              for item in forced_items))
+
     _sep("블렌딩 결과")
     print(f"  최종 키워드 수 : {len(blended)}개  (가중치: base={weights['base']} / nlp={weights['nlp']} / competitor={weights['competitor']})")
     print(f"\n  {'키워드':<24} {'score':>6}  {'source':<12}  {'검색량':>8}")
@@ -332,11 +318,11 @@ def run(place_id: int, round_no: int = 1):
         )
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 4 · 카테고리 태깅 + 유도어 결합
+    # STAGE 4 · 의미 태깅 + 포맷팅 + 검색량 가중 최종 정렬
     # ══════════════════════════════════════════════════════════════════════
     formatted = attach_inducement(blended, top_n=len(blended), use_similarity=True)
 
-    # ── keyword_meta 결합 (NLP 키워드에만 STAGE 2.5 메타데이터 존재) ──────────
+    # keyword_meta 결합
     for item in formatted:
         base_kw = (
             " ".join(item["keyword"].split()[:-1])
@@ -349,91 +335,94 @@ def run(place_id: int, round_no: int = 1):
         item["rank_no_change"]        = meta.get("rank_no_change", 0)
         item["monthly_search_volume"] = item.get("monthly_search_volume") or meta.get("monthly_search_volume", 0)
         item["mention_count"]         = meta.get("mention_count", 0)
+        item["competition_level"]     = meta.get("competition_level", "낮음")
         item["is_opportunity"]        = meta.get("is_opportunity", False)
-        monthly_search_volume = item.get("monthly_search_volume", 0)
-        if meta.get("competition_level"):
-            item["competition_level"] = meta["competition_level"]
-        else:
-            # 순위 데이터 없는 키워드는 검색량으로 직접 계산
-            if monthly_search_volume >= 10000:
-                item["competition_level"] = "높음"
-            elif monthly_search_volume >= 1000:
-                item["competition_level"] = "중간"
-            else:
-                item["competition_level"] = "중간"  # 검색량도 없으면 중간값
 
-    _sep("STAGE 4 · 카테고리 태깅 + 유도어 결합")
-    print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개 (원본 + 유도어 결합형)")
-    print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  ngram  induced")
-    print(f"  {'-'*88}")
+    # ── 검색량 후조회 ──────────────────────────────────────────────────────
+    zero_vol_kws = [item["keyword"] for item in formatted if not item.get("monthly_search_volume")]
+    if zero_vol_kws:
+        extra_volumes = get_keyword_monthly_search(zero_vol_kws)
+        filled_count = 0
+        for item in formatted:
+            if not item.get("monthly_search_volume") and item["keyword"] in extra_volumes:
+                vol = extra_volumes[item["keyword"]]
+                item["monthly_search_volume"] = vol
+                item["competition_level"]     = get_competition_level(vol)
+                item["is_opportunity"]        = (
+                    vol >= COMPETITION_THRESHOLDS["중간"]
+                    and (item.get("rank_no") is None or item["rank_no"] > 10)
+                )
+                filled_count += 1
+        print(f"\n  [검색량 후조회] 대상={len(zero_vol_kws)}개, 채워진 키워드={filled_count}개")
+
+    # 검색량 가중 최종 정렬: base_score(60%) + vol_normalized(40%)
+    _LOG_MAX_VOL = math.log(200_000 + 1)
+    for item in formatted:
+        vol = item.get("monthly_search_volume") or 0
+        vol_norm = math.log(vol + 1) / _LOG_MAX_VOL
+        item["base_score"] = round(item["base_score"] * 0.6 + vol_norm * 0.4, 4)
+    formatted.sort(key=lambda x: -x["base_score"])
+
+    _sep("STAGE 4 · 최종 키워드")
+    print(f"  입력 {len(blended)}개 → 출력 {len(formatted)}개")
+    print(f"\n  {'키워드':<24} {'점수':>6}  {'카테고리':<8}  {'목적':<10}  {'source':<12}  induced")
+    print(f"  {'-'*82}")
     for item in formatted:
         print(
             f"  {item['keyword']:<24} {item['base_score']:>6.4f}  "
             f"{item['category']:<8}  {item['keyword_purpose']:<10}  "
             f"{item.get('source', ''):<12}  "
-            f"{'O' if item['is_ngram']   else 'X':^5}  "
             f"{'O' if item['is_induced'] else 'X':^7}"
         )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 5 · recommend_keywords 테이블에 직접 저장 (Python 담당)
-    # ══════════════════════════════════════════════════════════════════════
     scored_map = {item["keyword"]: item["breakdown"] for item in scored}
-    upserted = upsert_recommend_keywords(place_id, formatted, scored_map)
-
-    _sep("STAGE 5 · recommend_keywords 저장 완료")
-    print(f"  place_id={place_id} 키워드 {upserted}개 저장")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 6 · SEO Score 산출 + 저장 (round=2에서만 의미 있음)
-    # ══════════════════════════════════════════════════════════════════════
-    seo_result      = None
-    feedback_result = None
+    upsert_recommend_keywords(place_id, formatted, scored_map)
 
     if round_no == 2:
         keywords        = get_recommend_keywords(place_id)
-        seo_scorer      = SEOScorer()
-        seo_result      = seo_scorer.calc_score(keywords)
+        place_scorer    = PlaceScorer()
+        place_score_result   = place_scorer.calc_score(keywords, place_info, len(reviews))
 
-        _sep("STAGE 6 · SEO Score 산출")
-        print(f"  SEO 점수 : {seo_result['total']}점  {seo_result['grade']}")
-        b = seo_result["breakdown"]
-        print(f"  키워드 최적화  : {b['keyword_optimization']:.1f} / 40")
-        print(f"  리뷰 품질      : {b['review_quality']:.1f} / 30")
-        print(f"  검색 노출 현황 : {b['search_exposure']:.1f} / 20")
-        print(f"  경쟁 포지셔닝  : {b['competition']:.1f} / 10")
+        _sep("STAGE 5 · 플레이스 관리 점수 산출")
+        print(f"  플레이스 관리 점수 : {place_score_result['total']}점  {place_score_result['grade']}")
+        b = place_score_result["breakdown"]
+        print(f"  매장 정보 완성도 : {b['place_completeness']:.1f} / 40")
+        print(f"  리뷰 품질        : {b['review_quality']:.1f} / 60")
 
-        # ── STAGE 7 · SEO 피드백 생성 ─────────────────────────────────────
-        seo_feedback_gen = SEOFeedback()
-        feedback_result  = seo_feedback_gen.generate(seo_result, reviews)
+        place_feedback_gen = PlaceFeedback()
+        feedback_result    = place_feedback_gen.generate(place_score_result, reviews, competitor_result)
 
-        _sep("STAGE 7 · SEO 피드백 생성")
+        _sep("STAGE 6 · 플레이스 운영 개선 피드백 생성")
         print(f"  총평 : {feedback_result['summary']}")
-        print(f"\n  [SEO 기반 피드백]")
+        print(f"\n  [매장 정보 완성도 기반 피드백]")
         for fb in feedback_result['seo_feedback']:
             print(f"    · {fb}")
         print(f"\n  [리뷰 기반 피드백]")
         for fb in feedback_result['review_feedback']:
             print(f"    · {fb}")
+        print(f"\n  [경쟁업체 기반 피드백]")
+        for fb in feedback_result['competitor_feedback']:
+            print(f"    · {fb}")
 
-        # ── STAGE 8 · seo_results 테이블에 직접 저장 (Python 담당) ────────
-        upsert_seo_result(place_id, seo_result, feedback_result)
+        place_summary_gen = PlaceSummary()
+        summary_result    = place_summary_gen.generate(keywords)
+        feedback_result["place_summary"] = summary_result["summary"]
 
-        _sep("STAGE 8 · seo_results 저장 완료")
-        print(f"  place_id={place_id} SEO 결과 저장")
+        _sep("STAGE 7 · 플레이스 분석 요약")
+        print(summary_result["text"])
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 9 · Redis 큐에 완료 알림 적재
-    # ══════════════════════════════════════════════════════════════════════
+        upsert_seo_result(place_id, place_score_result, feedback_result)
+
+    # ── Redis 큐에 완료 알림 적재 ────────────────────────────────────────────
     if round_no == 1:
-        # 1차: 키워드 문자열 목록만 전달 (Spring이 RankSearch 후 2차 요청)
+        # round=1: 키워드 목록만 전달 — Spring이 순위 크롤링 후 round=2 재요청
         result_data = {
-            "place_id": place_id,
-            "round":    1,
-            "keywords": [item["keyword"] for item in formatted]
+            "place_id":                place_id,
+            "round":                   1,
+            "keywords":                [item["keyword"] for item in formatted],
+            "base_keyword_candidates": [item["keyword"] for item in base_kws if item.get("keyword")],
         }
     else:
-        # 2차: 키워드 + 순위/검색량 전체 데이터 전달
         result_data = {
             "place_id": place_id,
             "round":    2,
@@ -445,23 +434,35 @@ def run(place_id: int, round_no: int = 1):
                     "rankNo":              item.get("rank_no"),
                     "competitionLevel":    item.get("competition_level", "낮음"),
                     "isOpportunity":       item.get("is_opportunity", False),
+                    "keywordPurpose":      item.get("keyword_purpose", "search"),
+                    "isInduced":           item.get("is_induced", False),
                 }
                 for item in formatted
             ],
+            "marketingKeywords": [
+                {
+                    "keyword":  item["keyword"],
+                    "category": item.get("category", ""),
+                    "property": item.get("property", ""),
+                    "score":    item["score"],
+                }
+                for item in marketing_kws
+                if not item.get("is_induced", False)
+                and item.get("category", "미분류") != "미분류"
+            ],
             "seo": {
-                "total":    seo_result["total"],
-                "grade":    seo_result["grade"],
+                "total":    place_score_result["total"],
+                "grade":    place_score_result["grade"],
                 "breakdown": {
-                    "keywordOptimization": seo_result["breakdown"]["keyword_optimization"],
-                    "reviewQuality":       seo_result["breakdown"]["review_quality"],
-                    "searchExposure":      seo_result["breakdown"]["search_exposure"],
-                    "competition":         seo_result["breakdown"]["competition"],
+                    "placeCompleteness": place_score_result["breakdown"]["place_completeness"],
+                    "reviewQuality":     place_score_result["breakdown"]["review_quality"],
                 },
             },
             "feedback": {
-                "summary":        feedback_result["summary"],
-                "seoFeedback":    feedback_result["seo_feedback"],
-                "reviewFeedback": feedback_result["review_feedback"],
+                "summary":            feedback_result["summary"],
+                "seoFeedback":        feedback_result["seo_feedback"],
+                "reviewFeedback":     feedback_result["review_feedback"],
+                "competitorFeedback": feedback_result["competitor_feedback"],
             },
         }
 
@@ -469,9 +470,7 @@ def run(place_id: int, round_no: int = 1):
         "analysis:result:queue",
         json.dumps(result_data, ensure_ascii=False)
     )
-
-    _sep("STAGE 9 · Redis 큐 적재 완료")
-    print(f"  place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
+    print(f"\n[Redis] 결과 적재 완료 place_id={place_id}, round={round_no}, 키워드={len(formatted)}개")
 
 
 def listen_queue():
@@ -504,5 +503,4 @@ def listen_queue():
 
 if __name__ == "__main__":
     create_recommend_keywords_table()
-    create_seo_results_table()
     listen_queue()

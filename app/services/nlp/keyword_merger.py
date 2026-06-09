@@ -1,22 +1,12 @@
-# STAGE 2.5 · 외부 키워드 결합
+# STAGE 2 · 외부 키워드 결합
 #
-# ─ 역할 ──────────────────────────────────────────────────────────────────────
-# NLP 추출 키워드(STAGE 2 결과)와 RDS 순위 데이터를 병합.
-# CASE A/B/C로 분류해 최종 merged_tfidf / keyword_meta 생성.
+# NLP 추출 키워드(TF-IDF)와 RDS 순위 데이터를 병합.
+# CASE A: NLP∩순위 — NLP 점수 유지 + 순위 메타 결합
+# CASE B: 순위only — 검색량 기반 합성 점수로 추가 (리뷰 언급 없으므로 recency=0)
+# CASE C: NLP only — NLP 점수 그대로 유지
+# is_opportunity: 검색량 ≥ 1000 이고 순위 10위 밖 → 개선 여지 있음
 #
-# ─ CASE 정의 ────────────────────────────────────────────────────────────────
-# CASE A : NLP ∩ rankings  — 리뷰에도 언급되고 현재 순위도 있는 키워드
-#           → NLP 점수 유지 + 순위 메타데이터 결합
-# CASE B : rankings only   — 순위는 있으나 NLP에서 추출되지 않은 키워드
-#           → 검색량 기반 합성 점수로 merged_tfidf에 추가
-# CASE C : NLP only        — NLP에서 추출됐으나 순위 데이터 없음
-#           → NLP 점수 그대로 유지
-#
-# ─ is_opportunity 판별 ──────────────────────────────────────────────────────
-# 검색량이 높은(≥ 1000)데 순위권(≤ 10위) 밖에 있는 키워드 → 개선 여지 있음
-#
-# ─ 파이프라인 위치 ───────────────────────────────────────────────────────────
-# STAGE 2 (N-gram) → [STAGE 2.5] → STAGE 3 (scorer)
+# 파이프라인: STAGE 1b(TF-IDF) → [STAGE 2] → STAGE 3(scorer)
 
 from collections import Counter
 
@@ -46,47 +36,26 @@ def merge_keywords(
     nlp_per_review: dict[int, Counter],
 ) -> tuple[dict[str, float], dict[int, Counter], dict[str, dict]]:
     """
-    NLP 추출 키워드 + RDS 순위 데이터 병합.
-
-    Parameters
-    ----------
-    place_id      : 매장 ID
-    nlp_tfidf     : STAGE 2 merged_tfidf  {keyword: tfidf_score}
-    nlp_per_review: STAGE 2 merged_per_review  {review_id: Counter}
-
-    Returns
-    -------
-    merged_tfidf     : CASE A/B/C 키워드 포함  {keyword: float}
-    merged_per_review: CASE B 합성 Counter 추가  {review_id: Counter}
-                       ※ CASE B는 mention_count=0, recency=0, consistency=0
-    keyword_meta     : 키워드별 CASE/순위/검색량 메타데이터
-                       {keyword: {case_type, rank_no, rank_no_change,
-                                  monthly_search_volume, mention_count,
-                                  competition_level, is_opportunity}}
+    NLP 추출 키워드 + RDS 순위 데이터 병합 (CASE A/B/C 분류).
+    CASE B는 리뷰 언급 없으므로 recency=0, consistency=0이 의도된 동작.
     """
-    # ── 0. RDS 데이터 조회 ─────────────────────────────────────────────────
     rankings: list[dict] = get_place_rankings(place_id)
-
-    # 순위 키워드 집합 및 검색량 조회
-    ranked_keywords: set[str]     = {r["keyword"] for r in rankings}
-    rank_map: dict[str, dict]     = {r["keyword"]: r for r in rankings}
+    ranked_keywords: set[str]      = {r["keyword"] for r in rankings}
+    rank_map: dict[str, dict]      = {r["keyword"]: r for r in rankings}
     search_volumes: dict[str, int] = get_keyword_monthly_search(list(ranked_keywords))
 
-    # ── 1. mention_count 계산 (per_review 기반) ────────────────────────────
-    # 각 키워드가 몇 개 리뷰에 등장했는지
+    # 키워드별 언급 리뷰 수
     mention_counts: dict[str, int] = {}
     for counter in nlp_per_review.values():
         for kw in counter:
             mention_counts[kw] = mention_counts.get(kw, 0) + 1
 
-    # ── 2. CASE 분류 ────────────────────────────────────────────────────────
     nlp_keywords: set[str] = set(nlp_tfidf.keys())
-    case_a = nlp_keywords & ranked_keywords   # NLP ∩ rankings
-    case_b = ranked_keywords - nlp_keywords   # rankings only
-    case_c = nlp_keywords - ranked_keywords   # NLP only
+    case_a = nlp_keywords & ranked_keywords
+    case_b = ranked_keywords - nlp_keywords
+    case_c = nlp_keywords - ranked_keywords
 
-    # ── 3. CASE B 합성 점수 계산 ────────────────────────────────────────────
-    # 검색량 기반으로 NLP top 점수의 최대 CASE_B_SCORE_CAP 비율로 스케일
+    # CASE B 합성 점수: 검색량 기반, NLP top 점수의 최대 CASE_B_SCORE_CAP 비율로 스케일
     max_nlp_score  = max(nlp_tfidf.values()) if nlp_tfidf else 1.0
     case_b_volumes = {kw: search_volumes.get(kw, 0) for kw in case_b}
     max_b_volume   = max(case_b_volumes.values(), default=1) or 1
@@ -96,15 +65,11 @@ def merge_keywords(
         for kw, vol in case_b_volumes.items()
     }
 
-    # ── 4. merged_tfidf 구성 (CASE A + C 유지, CASE B 추가) ────────────────
-    merged_tfidf: dict[str, float] = dict(nlp_tfidf)   # CASE A + C
-    merged_tfidf.update(case_b_scores)                  # CASE B 추가
+    merged_tfidf: dict[str, float] = dict(nlp_tfidf)
+    merged_tfidf.update(case_b_scores)
 
-    # ── 5. merged_per_review — CASE B는 빈 Counter (리뷰 언급 없음) ──────────
-    # scorer가 CASE B에 대해 recency=0, consistency=0 반환하는 것이 의도된 동작
     merged_per_review: dict[int, Counter] = dict(nlp_per_review)
 
-    # ── 6. keyword_meta 구성 ───────────────────────────────────────────────
     keyword_meta: dict[str, dict] = {}
 
     for kw in merged_tfidf:
@@ -121,7 +86,6 @@ def merge_keywords(
         else:
             case_type = "C"
 
-        # is_opportunity: 검색량 높은데 10위권 밖이거나 순위 없는 키워드
         is_opportunity = (
             search_vol >= COMPETITION_THRESHOLDS["중간"]
             and (rank_no is None or rank_no > 10)
