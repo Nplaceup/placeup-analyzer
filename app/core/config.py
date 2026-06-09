@@ -14,20 +14,26 @@ APP_DIR = BASE_DIR / "app"
 STOPWORDS_PATH = APP_DIR / "data" / "stopwords.txt"
 SENTIMENT_DICT_PATH = APP_DIR / "data" / "SentiWord_info.json"
 
+
+def _db_env(prefix: str, key: str):
+    database_key = "USERNAME" if key == "USER" else key
+    return os.getenv(f"{prefix}_DB_{key}") or os.getenv(f"DATABASE_{database_key}")
+
+
 # 읽기용 - RDS (크롤링 데이터)
 READ_DB_URL = (
     f"postgresql://"
-    f"{os.getenv('READ_DB_USER')}:{os.getenv('READ_DB_PASSWORD')}"
-    f"@{os.getenv('READ_DB_HOST')}:{os.getenv('READ_DB_PORT')}"
-    f"/{os.getenv('READ_DB_NAME')}"
+    f"{_db_env('READ', 'USER')}:{_db_env('READ', 'PASSWORD')}"
+    f"@{_db_env('READ', 'HOST')}:{_db_env('READ', 'PORT')}"
+    f"/{_db_env('READ', 'NAME')}"
 )
 
 # 쓰기용 - 로컬 DB (분석 결과 적재)
 WRITE_DB_URL = (
     f"postgresql://"
-    f"{os.getenv('WRITE_DB_USER')}:{os.getenv('WRITE_DB_PASSWORD')}"
-    f"@{os.getenv('WRITE_DB_HOST')}:{os.getenv('WRITE_DB_PORT')}"
-    f"/{os.getenv('WRITE_DB_NAME')}"
+    f"{_db_env('WRITE', 'USER')}:{_db_env('WRITE', 'PASSWORD')}"
+    f"@{_db_env('WRITE', 'HOST')}:{_db_env('WRITE', 'PORT')}"
+    f"/{_db_env('WRITE', 'NAME')}"
 )
 
 

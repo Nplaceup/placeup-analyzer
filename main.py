@@ -28,12 +28,13 @@ from app.db.repository import get_recommend_keywords
 import redis
 import json
 import time
+import os
 
 # ── Redis 연결 ──────────────────────────────────────────────────────────────
 r = redis.Redis(
-    host='localhost',
-    port=6379,
-    db=0,
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    db=int(os.getenv("REDIS_DB", "0")),
     socket_keepalive=True,
     socket_connect_timeout=5,
     retry_on_timeout=True,

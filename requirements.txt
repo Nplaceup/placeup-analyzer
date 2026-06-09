@@ -1,0 +1,8 @@
+python-dotenv
+redis
+sqlalchemy
+psycopg2-binary
+pandas
+konlpy
+sentence-transformers
+scikit-learn
