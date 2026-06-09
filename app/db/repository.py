@@ -452,6 +452,10 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
 
     with WriteSession() as session:
         session.execute(
+            text("DELETE FROM recommend_keywords WHERE place_id = :place_id"),
+            {"place_id": place_id},
+        )
+        session.execute(
             text("""
                 INSERT INTO recommend_keywords
                     (place_id, keyword, score,
@@ -469,24 +473,6 @@ def upsert_recommend_keywords(place_id: int, formatted: list[dict], scored_map: 
                      :monthly_search_volume, :mention_count,
                      :competition_level, :is_opportunity,
                      NOW())
-                ON CONFLICT (place_id, keyword)
-                DO UPDATE SET
-                    score                  = EXCLUDED.score,
-                    tfidf_score            = EXCLUDED.tfidf_score,
-                    sentiment_score        = EXCLUDED.sentiment_score,
-                    recency_score          = EXCLUDED.recency_score,
-                    consistency_score      = EXCLUDED.consistency_score,
-                    is_induced             = EXCLUDED.is_induced,
-                    keyword_purpose        = EXCLUDED.keyword_purpose,
-                    category               = EXCLUDED.category,
-                    case_type              = EXCLUDED.case_type,
-                    rank_no                = EXCLUDED.rank_no,
-                    rank_no_change         = EXCLUDED.rank_no_change,
-                    monthly_search_volume  = EXCLUDED.monthly_search_volume,
-                    mention_count          = EXCLUDED.mention_count,
-                    competition_level      = EXCLUDED.competition_level,
-                    is_opportunity         = EXCLUDED.is_opportunity,
-                    analyzed_at            = NOW()
             """),
             rows
         )
