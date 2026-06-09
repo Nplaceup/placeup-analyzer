@@ -1,5 +1,4 @@
 from datetime import datetime
-from collections import Counter
 from typing import Optional
 
 

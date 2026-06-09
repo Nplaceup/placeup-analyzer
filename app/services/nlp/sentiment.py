@@ -1,11 +1,8 @@
 import re
 import html
-import json
-from app.core.config import SENTIMENT_DICT_PATH
 from transformers import pipeline
 from kiwipiepy import Kiwi
 
-_SENTIMENT_CACHE: dict[str, int] | None = None
 _KIWI_INSTANCE:      Kiwi | None = None
 _KOELECTRA_INSTANCE              = None
 
@@ -30,42 +27,6 @@ def _get_koelectra():
 
 
 class SentimentAnalyzer:
-    def __init__(self):
-        self.sentiment_dict = self._load_sentiment_dict()
-
-    # ── 사전 로드 ────────────────────────────────────────────────────────────
-    def _load_sentiment_dict(self) -> dict[str, int]:
-        global _SENTIMENT_CACHE
-        if _SENTIMENT_CACHE is not None:
-            return _SENTIMENT_CACHE
-
-        try:
-            with open(SENTIMENT_DICT_PATH, "r", encoding="utf-8") as f:
-                raw: list[dict] = json.load(f)
-        except FileNotFoundError:
-            print(f"경고: 감성사전 파일을 찾을 수 없음 → {SENTIMENT_DICT_PATH}")
-            _SENTIMENT_CACHE = {}
-            return _SENTIMENT_CACHE
-
-        result: dict[str, int] = {}
-        for entry in raw:
-            score = int(entry["polarity"])
-            if score == 0:
-                continue
-            root = entry.get("word_root", "").strip()
-            word = entry.get("word", "").strip()
-
-            if root and " " not in root:
-                if root not in result or abs(score) > abs(result[root]):
-                    result[root] = score
-
-            if word and " " not in word and word not in result:
-                result[word] = score
-
-        print(f"감성 사전 로드 완료 ({len(result)}개 항목)")
-        _SENTIMENT_CACHE = result
-        return _SENTIMENT_CACHE
-
     # ── 텍스트 정제 ──────────────────────────────────────────────────────────
     def _clean(self, text: str) -> str:
         text = html.unescape(text)
@@ -232,14 +193,3 @@ class SentimentAnalyzer:
 
         return ratios
 
-    # ── 단일 키워드 유틸 ─────────────────────────────────────────────────────
-    def get_score(self, keyword: str) -> int:
-        return self.sentiment_dict.get(keyword, 0)
-
-    def get_pos_neg(self, keyword: str) -> str:
-        score = self.get_score(keyword)
-        if score > 0:
-            return "positive"
-        if score < 0:
-            return "negative"
-        return "neutral"
