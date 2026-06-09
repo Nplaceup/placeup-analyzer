@@ -1,59 +1,33 @@
 import re
 import html
-import json
-from app.core.config import SENTIMENT_DICT_PATH
+from transformers import pipeline
+from kiwipiepy import Kiwi
 
-# 모듈 단위 캐시 — 인스턴스를 여러 번 생성해도 JSON을 한 번만 읽음
-_SENTIMENT_CACHE: dict[str, int] | None = None
+_KIWI_INSTANCE:      Kiwi | None = None
+_KOELECTRA_INSTANCE              = None
+
+
+def _get_kiwi() -> Kiwi:
+    """Kiwi 인스턴스 싱글톤 — 초기화 비용이 크므로 한 번만 생성."""
+    global _KIWI_INSTANCE
+    if _KIWI_INSTANCE is None:
+        _KIWI_INSTANCE = Kiwi()
+    return _KIWI_INSTANCE
+
+
+def _get_koelectra():
+    """KoELECTRA 싱글톤 — SentimentAnalyzer 복수 생성 시 모델 중복 로드 방지."""
+    global _KOELECTRA_INSTANCE
+    if _KOELECTRA_INSTANCE is None:
+        _KOELECTRA_INSTANCE = pipeline(
+            "text-classification",
+            model="WhitePeak/bert-base-cased-Korean-sentiment",
+        )
+    return _KOELECTRA_INSTANCE
 
 
 class SentimentAnalyzer:
-    def __init__(self):
-        self.sentiment_dict = self._load_sentiment_dict()
-
-    # ── 사전 로드 ────────────────────────────────────────────────────────────
-    def _load_sentiment_dict(self) -> dict[str, int]:
-        """
-        SentiWord JSON 로드: [{word, word_root, polarity}]
-        → {단일토큰: polarity_int}
-
-        인덱싱 규칙
-        - word_root 우선: 단일 토큰이면 등록, 충돌 시 절댓값 큰 쪽 유지
-        - word 보조: 단일 토큰이고 아직 없으면 등록
-        - polarity == 0 항목 제외
-        """
-        global _SENTIMENT_CACHE
-        if _SENTIMENT_CACHE is not None:
-            return _SENTIMENT_CACHE
-
-        try:
-            with open(SENTIMENT_DICT_PATH, "r", encoding="utf-8") as f:
-                raw: list[dict] = json.load(f)
-        except FileNotFoundError:
-            print(f"경고: 감성사전 파일을 찾을 수 없음 → {SENTIMENT_DICT_PATH}")
-            _SENTIMENT_CACHE = {}
-            return _SENTIMENT_CACHE
-
-        result: dict[str, int] = {}
-        for entry in raw:
-            score = int(entry["polarity"])
-            if score == 0:
-                continue
-            root = entry.get("word_root", "").strip()
-            word = entry.get("word", "").strip()
-
-            if root and " " not in root:
-                if root not in result or abs(score) > abs(result[root]):
-                    result[root] = score
-
-            if word and " " not in word and word not in result:
-                result[word] = score
-
-        print(f"감성 사전 로드 완료 ({len(result)}개 항목)")
-        _SENTIMENT_CACHE = result
-        return _SENTIMENT_CACHE
-
-    # ── 텍스트 정제 (ReviewPreprocessor 의존 없이 경량 처리) ─────────────────
+    # ── 텍스트 정제 ──────────────────────────────────────────────────────────
     def _clean(self, text: str) -> str:
         text = html.unescape(text)
         text = text.replace("¶", " ")
@@ -61,50 +35,95 @@ class SentimentAnalyzer:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
-    # ── 리뷰 단위 감성 점수 ──────────────────────────────────────────────────
-    def analyze_review(self, text: str) -> float:
-        """
-        리뷰 텍스트 1개 → 감성 점수.
-        정제 후 토큰 단위 polarity 평균 (매칭 어휘 없으면 0.0).
-
-        반환 범위: -2.0 ~ 2.0
-        """
-        if not text:
-            return 0.0
-        tokens = self._clean(text).split()
-        scores = [self.sentiment_dict[t] for t in tokens if t in self.sentiment_dict]
-        return round(sum(scores) / len(scores), 4) if scores else 0.0
-
     # ── 키워드별 감성 집계 ───────────────────────────────────────────────────
     def analyze(
         self,
         reviews: list,
         per_review: dict[int, dict],
+        batch_size: int = 32,
+        debug: bool = False,
     ) -> dict[str, float]:
         """
-        키워드별 감성 점수 집계.
-
-        reviews     : [{"id": int, "content": str}, ...] 또는 ORM 객체 리스트
-        per_review  : {review_id: Counter(keyword → count)}  ← extract_per_review() 결과
-        반환        : {keyword: 리뷰 감성 점수의 빈도 가중 평균}
+        키워드별 감성 점수 집계 (키워드 포함 문장만 분석).
+        reviews    : [{"id": int, "content": str}, ...] 또는 ORM 객체 리스트
+        per_review : {review_id: Counter(keyword → count)}
+        반환       : {keyword: 문장 단위 감성 점수의 빈도 가중 평균}
         """
-        score_sum: dict[str, float] = {}
-        weight_sum: dict[str, int] = {}
+        target_ids = set(per_review.keys())
+        target_reviews = [
+            r for r in reviews
+            if (r["id"] if isinstance(r, dict) else r.id) in target_ids
+        ]
 
-        for review in reviews:
-            if isinstance(review, dict):
-                review_id = review["id"]
-                content   = review["content"]
-            else:
-                review_id = review.id
-                content   = review.content
+        if not target_reviews:
+            return {}
 
-            review_score = self.analyze_review(content)
-            counter = per_review.get(review_id, {})
+        kiwi = _get_kiwi()
 
-            for keyword, count in counter.items():
-                score_sum[keyword]  = score_sum.get(keyword, 0.0) + review_score * count
-                weight_sum[keyword] = weight_sum.get(keyword, 0) + count
+        entries: list[tuple[str, int, str]] = []       # (kw, review_id, cleaned_sent)
+        review_kw_counts: dict[tuple[str, int], int] = {}
+
+        for r in target_reviews:
+            review_id = r["id"] if isinstance(r, dict) else r.id
+            content   = r["content"] if isinstance(r, dict) else r.content
+            counter   = per_review.get(review_id, {})
+            if not counter:
+                continue
+
+            keywords = list(counter.keys())
+            sents = [s.text for s in kiwi.split_into_sents(content)]
+
+            for sent_text in sents:
+                matched = [kw for kw in keywords if kw in sent_text]
+                if not matched:
+                    continue
+                cleaned = self._clean(sent_text)[:512]
+                for kw in matched:
+                    entries.append((kw, review_id, cleaned))
+                    review_kw_counts.setdefault((kw, review_id), counter[kw])
+
+        if not entries:
+            return {}
+
+        # 동일 문장이 여러 키워드에 매칭될 수 있으므로 유니크 텍스트만 추론
+        koelectra    = _get_koelectra()
+        unique_texts = list(dict.fromkeys(t for _, _, t in entries))
+        text_score:  dict[str, float] = {}
+        for i in range(0, len(unique_texts), batch_size):
+            batch = unique_texts[i : i + batch_size]
+            for text, res in zip(batch, koelectra(batch)):
+                text_score[text] = res["score"] if res["label"] == "LABEL_1" else -res["score"]
+
+        inferred = [text_score[t] for _, _, t in entries]
+
+        # (kw, review_id) → 문장 점수 목록
+        kw_review_sents: dict[tuple[str, int], list[float]] = {}
+        for (kw, review_id, _), score in zip(entries, inferred):
+            kw_review_sents.setdefault((kw, review_id), []).append(score)
+
+        if debug:
+            neg = sum(1 for s in inferred if s < 0)
+            pos = sum(1 for s in inferred if s > 0)
+            print(f"\n  [DEBUG 요약] 긍정 문장={pos}  부정 문장={neg}  전체={len(inferred)}")
+
+            neg_kw: dict[str, int] = {}
+            for (kw, _, _), score in zip(entries, inferred):
+                if score < 0:
+                    neg_kw[kw] = neg_kw.get(kw, 0) + 1
+            if neg_kw:
+                top_neg = sorted(neg_kw.items(), key=lambda x: -x[1])[:15]
+                print(f"  [DEBUG 부정 문장 출현 키워드 top15]")
+                for kw, cnt in top_neg:
+                    print(f"    {kw:<15} {cnt}회")
+
+        score_sum:  dict[str, float] = {}
+        weight_sum: dict[str, int]   = {}
+
+        for (kw, review_id), sent_scores in kw_review_sents.items():
+            avg_score = sum(sent_scores) / len(sent_scores)
+            count = review_kw_counts[(kw, review_id)]
+            score_sum[kw]  = score_sum.get(kw, 0.0) + avg_score * count
+            weight_sum[kw] = weight_sum.get(kw, 0) + count
 
         return {
             kw: round(score_sum[kw] / weight_sum[kw], 4)
@@ -112,16 +131,65 @@ class SentimentAnalyzer:
             if weight_sum[kw] > 0
         }
 
-    # ── 단일 키워드 유틸 ─────────────────────────────────────────────────────
-    def get_score(self, keyword: str) -> int:
-        """키워드의 polarity 점수 반환 (사전에 없으면 0)."""
-        return self.sentiment_dict.get(keyword, 0)
+    # ── 피드백용 배치 감성 분석 ──────────────────────────────────────────────
+    def batch_analyze_by_keywords(
+        self,
+        reviews: list,
+        keyword_groups: list[list[str]],
+        batch_size: int = 32,
+    ) -> list[float]:
+        """
+        여러 키워드 그룹에 대해 부정 감성 리뷰 비율을 배치로 계산.
+        keyword_groups : [["주차"], ["웨이팅", "대기"], ...]
+        반환           : 각 그룹의 (부정 리뷰 수 / 전체 리뷰 수)
 
-    def get_pos_neg(self, keyword: str) -> str:
-        """키워드를 'positive' / 'negative' / 'neutral' 로 분류."""
-        score = self.get_score(keyword)
-        if score > 0:
-            return "positive"
-        if score < 0:
-            return "negative"
-        return "neutral"
+        단건 4회 호출 대신 전체 문장을 한 번에 배치 추론해 속도 절감.
+        """
+        total = len(reviews)
+        if total == 0 or not keyword_groups:
+            return [0.0] * len(keyword_groups)
+
+        kiwi = _get_kiwi()
+        all_keywords = {kw for grp in keyword_groups for kw in grp}
+
+        # 리뷰당 Kiwi 분리 1회 → 분리된 문장을 모든 그룹에 재사용
+        entries: list[tuple[int, int, str]] = []  # (grp_idx, rev_idx, cleaned_sent)
+        for rev_idx, r in enumerate(reviews):
+            content = r["content"] if isinstance(r, dict) else r.content
+            if not any(kw in content for kw in all_keywords):
+                continue
+            sents = [s.text for s in kiwi.split_into_sents(content)]
+            for grp_idx, keywords in enumerate(keyword_groups):
+                for sent_text in sents:
+                    if any(kw in sent_text for kw in keywords):
+                        entries.append((grp_idx, rev_idx, self._clean(sent_text)[:512]))
+
+        if not entries:
+            return [0.0] * len(keyword_groups)
+
+        # 배치 추론
+        koelectra = _get_koelectra()
+        texts = [t for _, _, t in entries]
+        inferred: list[float] = []
+        for i in range(0, len(texts), batch_size):
+            for res in koelectra(texts[i: i + batch_size]):
+                s = res["score"] if res["label"] == "LABEL_1" else -res["score"]
+                inferred.append(s)
+
+        # (grp_idx, rev_idx) → 문장 점수 목록
+        grp_rev_scores: dict[tuple[int, int], list[float]] = {}
+        for (grp_idx, rev_idx, _), score in zip(entries, inferred):
+            grp_rev_scores.setdefault((grp_idx, rev_idx), []).append(score)
+
+        # 그룹별 부정 비율 (문장 평균 < -0.3 → 부정 리뷰)
+        ratios: list[float] = []
+        for grp_idx in range(len(keyword_groups)):
+            negative_count = sum(
+                1 for rev_idx in range(total)
+                if (ss := grp_rev_scores.get((grp_idx, rev_idx)))
+                and sum(ss) / len(ss) < -0.3
+            )
+            ratios.append(negative_count / total)
+
+        return ratios
+

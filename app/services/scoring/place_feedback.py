@@ -13,7 +13,10 @@ class PlaceFeedback:
     출력: 총평 1개 + 매장 정보 기반 최대 3개 + 리뷰 기반 최대 3개 + 경쟁업체 기반 최대 3개
     """
 
-    REVIEW_KEYWORD_THRESHOLD = 0.05
+    REVIEW_KEYWORD_THRESHOLD = 0.2
+
+    def __init__(self):
+        self._sentiment = SentimentAnalyzer()  # 한 번만 생성
 
     def generate(
         self,
@@ -80,35 +83,21 @@ class PlaceFeedback:
         if total < 10:
             feedbacks.append("리뷰가 부족해요. 리뷰 이벤트나 방문 고객에게 리뷰 작성을 유도해보세요.")
 
-        # 감성 분석으로 부정 리뷰만 필터링
-        sentiment_analyzer = SentimentAnalyzer()
-        negative_reviews = [
-            r for r in reviews
-            if sentiment_analyzer.analyze_review(r["content"]) < 0
+        FEEDBACK_CATEGORIES = [
+            (["주차"],                  "주차 관련 언급이 많아요. 주차 안내 정보를 플레이스에 추가해보세요."),
+            (["웨이팅", "대기"],        "대기 관련 언급이 많아요. 웨이팅 안내 문구나 예약 시스템 도입을 고려해보세요."),
+            (["비싸", "가격", "값"],    "가격 관련 언급이 많아요. 가성비를 강조하는 키워드나 세트 메뉴 홍보를 고려해보세요."),
+            (["불친절", "불편", "실망"], "서비스 관련 부정적 리뷰가 있어요. 서비스 품질 개선이 필요할 수 있어요."),
         ]
 
-        def keyword_ratio(keywords: list[str]) -> float:
-            if not negative_reviews:
-                return 0.0
-            count = sum(
-                1 for r in negative_reviews
-                if any(kw in r["content"] for kw in keywords)
-            )
-            return count / total
+        ratios = self._sentiment.batch_analyze_by_keywords(
+            reviews, [kws for kws, _ in FEEDBACK_CATEGORIES]
+        )
 
-        if keyword_ratio(["주차"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("주차 관련 언급이 많아요. 주차 안내 정보를 플레이스에 추가해보세요.")
+        for ratio, (_, message) in zip(ratios, FEEDBACK_CATEGORIES):
+            if ratio >= self.REVIEW_KEYWORD_THRESHOLD:
+                feedbacks.append(message)
 
-        if keyword_ratio(["웨이팅", "대기"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("대기 관련 언급이 많아요. 웨이팅 안내 문구나 예약 시스템 도입을 고려해보세요.")
-
-        if keyword_ratio(["비싸", "가격", "값"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("가격 관련 언급이 많아요. 가성비를 강조하는 키워드나 세트 메뉴 홍보를 고려해보세요.")
-
-        if keyword_ratio(["불친절", "불편", "실망"]) >= self.REVIEW_KEYWORD_THRESHOLD:
-            feedbacks.append("서비스 관련 부정적 리뷰가 있어요. 서비스 품질 개선이 필요할 수 있어요.")
-
-        # 기본 메시지 (부정 키워드 없을 때)
         if not feedbacks:
             feedbacks.append("리뷰에서 특별한 개선 사항이 발견되지 않았어요. 현재 상태를 유지해보세요.")
 
@@ -121,12 +110,10 @@ class PlaceFeedback:
         advantage_keywords = competitor_result.get("advantage_keywords", [])
         category_gap       = competitor_result.get("category_gap", {})
 
-        # 독점 키워드 강점 피드백
         if advantage_keywords:
             top3 = ", ".join(advantage_keywords[:3])
             feedbacks.append(f"리뷰에서 자주 언급된 강점 키워드예요. ({top3}) 소개글과 메뉴 설명, 리뷰에 적극 활용해보세요.")
 
-        # 카테고리 갭 피드백
         for cat, v in category_gap.items():
             if v["competitor_avg"] > 0 and v["mine"] < v["competitor_avg"]:
                 feedbacks.append(
@@ -135,7 +122,6 @@ class PlaceFeedback:
                     f"관련 키워드를 보완해보세요."
                 )
 
-        # 기본 메시지 (경쟁업체 없거나 갭 없을 때)
         if not feedbacks:
             if competitor_result.get("competitor_count", 0) == 0:
                 feedbacks.append("아직 비교할 경쟁업체 데이터가 없어요. 더 많은 데이터가 쌓이면 경쟁 분석이 제공될 예정이에요.")

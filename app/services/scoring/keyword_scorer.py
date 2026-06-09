@@ -1,5 +1,4 @@
 from datetime import datetime
-from collections import Counter
 from typing import Optional
 
 
@@ -76,7 +75,7 @@ class keywordScorer:
         tfidf        : {keyword: tfidf_score}  — STAGE 2 merged_tfidf
         per_review   : {review_id: Counter}    — STAGE 2 merged_per_review
         review_dates : {review_id: datetime}   — 최신성 계산용
-        sentiment    : {keyword: float (-1~1)} — SentimentAnalyzer.analyze() ÷ 2 정규화값
+        sentiment    : {keyword: float (-1~1)} — SentimentAnalyzer.analyze() 반환값 그대로
                        None이면 중립 1.0 적용
 
         Returns

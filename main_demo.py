@@ -14,7 +14,6 @@ from collections import Counter
 from app.services.nlp.nlp_preprocessing import ReviewPreprocessor         # STAGE 1  (clean_text 전처리)
 from app.services.nlp.review_tfidf_analyze import ReviewTfidfAnalyzer     # STAGE 1  (형태소 분석) + STAGE 1b (TF-IDF)
 from app.services.nlp.keyword_normalizer import KeywordNormalizer          # STAGE 1a (표현 통일)
-from app.services.nlp.ngram import NgramExtractor                          # STAGE 2  (N-gram PMI)
 from app.services.scoring.keyword_scorer import keywordScorer              # STAGE 3  (스코어링)
 from app.output.keyword_formatter import expand_nlp_keywords, attach_inducement  # STAGE 3.5 / 4
 from app.data.blocklist import KEYWORD_BLOCKLIST                           # STAGE 1a (범용어 제거)
@@ -49,7 +48,7 @@ def _get_keyword_monthly_search(keyword_names: list[str]) -> dict[str, int]:
     return {kw: DEMO_SEARCH_VOLUMES.get(kw, 0) for kw in keyword_names}
 
 
-# ── STAGE 2.5 인라인 구현 (keyword_merger가 repository를 직접 호출하므로 대체) ──
+# ── STAGE 2 인라인 구현 (keyword_merger가 repository를 직접 호출하므로 대체) ──
 def _merge_keywords_demo(
     nlp_tfidf:      dict[str, float],
     nlp_per_review: dict[int, Counter],
@@ -205,78 +204,14 @@ def run():
         print(f"  {kw:<18} {score:>8.5f}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 2 · N-gram PMI 필터링
-    # ══════════════════════════════════════════════════════════════════════
-    ngram_extractor    = NgramExtractor(analyzer)
-    bigrams_per_review = ngram_extractor.extract_bigrams_per_review(reviews)
-
-    unigram_counts: Counter = Counter()
-    for counter in per_review.values():
-        unigram_counts.update(counter)
-
-    filtered_bigrams = ngram_extractor.compute_pmi(
-        bigrams_per_review,
-        unigram_counts,
-        min_count=2,
-        df_min=2,
-        pmi_threshold=1.0,
-    )
-
-    if filtered_bigrams:
-        max_pmi     = max(filtered_bigrams.values())
-        max_tfidf_v = max(tfidf.values()) if tfidf else 1.0
-        normalized_bigrams = {
-            bg: round((pmi / max_pmi) * max_tfidf_v, 6)
-            for bg, pmi in filtered_bigrams.items()
-        }
-    else:
-        normalized_bigrams = {}
-
-    merged_tfidf: dict = {**tfidf, **normalized_bigrams}
-
-    valid_bigrams = set(filtered_bigrams.keys())
-    merged_per_review: dict[int, Counter] = {}
-    for review_id, counter in per_review_clean.items():
-        merged = Counter(counter)
-        merged.update({
-            bg: cnt
-            for bg, cnt in bigrams_per_review.get(review_id, {}).items()
-            if bg in valid_bigrams
-        })
-        merged_per_review[review_id] = merged
-
-    _sep("STAGE 2 · N-gram PMI")
-    all_bigrams_raw: Counter = Counter()
-    for c in bigrams_per_review.values():
-        all_bigrams_raw.update(c)
-    bigram_df_debug: Counter = Counter()
-    for c in bigrams_per_review.values():
-        for bg in c:
-            bigram_df_debug[bg] += 1
-    cnt_min = sum(1 for v in all_bigrams_raw.values() if v >= 2)
-    cnt_df  = sum(1 for bg, v in all_bigrams_raw.items() if v >= 2 and bigram_df_debug[bg] >= 2)
-    print(f"  전체 bigram 후보        : {len(all_bigrams_raw):>4}개")
-    print(f"  min_count≥2 통과        : {cnt_min:>4}개")
-    print(f"  + df_min≥2 통과         : {cnt_df:>4}개  (단일 리뷰 반복 제거 후)")
-    print(f"  + PMI>1.0 최종 통과     : {len(filtered_bigrams):>4}개")
-    if filtered_bigrams:
-        print(f"\n  {'bigram':<22} {'PMI':>6}  df  →  {'정규화 TF-IDF':>12}")
-        print(f"  {'-'*52}")
-        for bg, pmi in sorted(filtered_bigrams.items(), key=lambda x: -x[1])[:15]:
-            df_val = bigram_df_debug[bg]
-            print(f"  {bg:<22} {pmi:>6.4f}  {df_val:>2}  →  {normalized_bigrams[bg]:>12.6f}")
-    else:
-        print("  ※ PMI 통과 bigram 없음")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 2.5 · 외부 키워드 결합 (CASE A/B/C)
+    # STAGE 2 · 외부 키워드 결합 (CASE A/B/C)
     # ══════════════════════════════════════════════════════════════════════
     merged_tfidf, merged_per_review, keyword_meta = _merge_keywords_demo(
-        nlp_tfidf      = merged_tfidf,
-        nlp_per_review = merged_per_review,
+        nlp_tfidf      = tfidf,
+        nlp_per_review = per_review_clean,
     )
 
-    _sep("STAGE 2.5 · 외부 키워드 결합 [DEMO 순위 데이터]")
+    _sep("STAGE 2 · 외부 키워드 결합 [DEMO 순위 데이터]")
     case_counts = {"A": 0, "B": 0, "C": 0}
     opp_count   = 0
     for meta in keyword_meta.values():
