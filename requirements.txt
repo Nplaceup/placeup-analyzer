@@ -6,3 +6,4 @@ pandas
 konlpy
 sentence-transformers
 scikit-learn
+kiwipiepy
