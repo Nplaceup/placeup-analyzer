@@ -74,51 +74,6 @@ class SentimentAnalyzer:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
-    # ── 단일 문장 감성분석기 호출 ─────────────────────────────────────────────
-    def _score_sentence(self, sentence: str) -> float:
-        result = _get_koelectra()(self._clean(sentence)[:512])[0]
-        label = result["label"]
-        score = result["score"]
-        if label == "LABEL_1":   # positive
-            return score
-        else:                     # LABEL_0 = negative
-            return -score
-
-    # ── 리뷰 단위 감성 점수 ──────────────────────────────────────────────────
-    def analyze_review(
-        self,
-        text: str,
-        target_keywords: list[str] | None = None,
-    ) -> float:
-        """
-        target_keywords 없음 → 기존 동작: 전체 텍스트를 KoELECTRA로 분석.
-        target_keywords 있음 → Kiwi로 문장 분리 후,
-                               키워드가 포함된 문장만 감성 분석해 평균 반환.
-                               해당 문장이 없으면 0.0 반환.
-        """
-        if not text:
-            return 0.0
-
-        # ── 기존 동작 (하위 호환) ──────────────────────────────────────────
-        if not target_keywords:
-            return self._score_sentence(text)
-
-        # ── 키워드 필터링 모드 ────────────────────────────────────────────
-        kiwi = _get_kiwi()
-        sentences = kiwi.split_into_sents(text)
-
-        matched_scores: list[float] = []
-        for sent in sentences:
-            sent_text = sent.text
-            # 키워드 중 하나라도 문장에 포함되면 분석 대상
-            if any(kw in sent_text for kw in target_keywords):
-                matched_scores.append(self._score_sentence(sent_text))
-
-        if not matched_scores:
-            return 0.0
-
-        return round(sum(matched_scores) / len(matched_scores), 4)
-
     # ── 키워드별 감성 집계 ───────────────────────────────────────────────────
     def analyze(
         self,
@@ -169,13 +124,16 @@ class SentimentAnalyzer:
         if not entries:
             return {}
 
-        koelectra = _get_koelectra()
-        texts = [t for _, _, t in entries]
-        inferred: list[float] = []
-        for i in range(0, len(texts), batch_size):
-            for res in koelectra(texts[i : i + batch_size]):
-                s = res["score"] if res["label"] == "LABEL_1" else -res["score"]
-                inferred.append(s)
+        # 동일 문장이 여러 키워드에 매칭될 수 있으므로 유니크 텍스트만 추론
+        koelectra    = _get_koelectra()
+        unique_texts = list(dict.fromkeys(t for _, _, t in entries))
+        text_score:  dict[str, float] = {}
+        for i in range(0, len(unique_texts), batch_size):
+            batch = unique_texts[i : i + batch_size]
+            for text, res in zip(batch, koelectra(batch)):
+                text_score[text] = res["score"] if res["label"] == "LABEL_1" else -res["score"]
+
+        inferred = [text_score[t] for _, _, t in entries]
 
         # (kw, review_id) → 문장 점수 목록
         kw_review_sents: dict[tuple[str, int], list[float]] = {}
