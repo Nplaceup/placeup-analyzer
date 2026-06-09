@@ -30,6 +30,8 @@ import json
 import time
 import os
 
+REDIS_BRPOP_TIMEOUT = int(os.getenv("REDIS_BRPOP_TIMEOUT", "10"))
+
 # ── Redis 연결 ──────────────────────────────────────────────────────────────
 r = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
@@ -37,6 +39,7 @@ r = redis.Redis(
     db=int(os.getenv("REDIS_DB", "0")),
     socket_keepalive=True,
     socket_connect_timeout=5,
+    socket_timeout=int(os.getenv("REDIS_SOCKET_TIMEOUT", "30")),
     retry_on_timeout=True,
 )
 
@@ -479,7 +482,11 @@ def listen_queue():
     print("[Worker] 분석 큐 대기 중...")
     while True:
         try:
-            _, data = r.brpop("analysis:queue")
+            message = r.brpop("analysis:queue", timeout=REDIS_BRPOP_TIMEOUT)
+            if message is None:
+                continue
+
+            _, data = message
             payload  = json.loads(data)
             place_id = payload["place_id"]
             round_no = payload.get("round", 1)
